@@ -1,0 +1,4568 @@
+---
+title: "Thesis_Bloomberg_Data"
+author: "Danla Sevtsov"
+date: "`r Sys.Date()`"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+# Libraries
+
+```{r, message=FALSE}
+packages <- c("tidyverse", "stringr","tidyr","lubridate","readxl","purrr","dplyr", "ggplot2", "scales","tidyquant","quantmod","zoo","moments","RColorBrewer","corrplot","quadprog","slider")
+
+# Install any that are missing, then load them
+for (pkg in packages) {
+  if (!require(pkg, character.only = TRUE)) {
+    install.packages(pkg, dependencies = TRUE)
+    library(pkg, character.only = TRUE)
+  }
+}
+```
+
+# Data upload and Inspection
+
+The original data file contains values for multiple tickers, all of which was downloaded from Bloomberg. 
+
+```{r,message=FALSE, warning=FALSE}
+# Reads the entire CSV without a header. The CSV file contains all of the data, which was downloaded from Bloomberg
+df_raw <- read.csv("Master_No_Links.csv", header = FALSE, stringsAsFactors = FALSE)
+
+# dimensions
+num_cols <- ncol(df_raw)
+num_rows <- nrow(df_raw)
+
+all_data <- list()
+
+col_indices <- seq(1, num_cols, by = 5)
+
+for (i in col_indices) {
+  if ((i + 3) > num_cols) break
+  ticker <- df_raw[1, i]
+  
+  # Rows 3..n contain the data
+  date_values    <- df_raw[3:num_rows, i]
+  px_bid_values  <- df_raw[3:num_rows, i + 1]
+  px_ask_values  <- df_raw[3:num_rows, i + 2]
+  px_last_values <- df_raw[3:num_rows, i + 3]
+  
+  # Converts date values from numeric to Date as they are in numberic excel format in the data file
+  numeric_dates <- as.numeric(date_values)
+  converted_dates <- as.Date(numeric_dates, origin = "1899-12-30")
+
+  chunk <- data.frame(
+    Ticker  = rep(ticker, length(numeric_dates)),
+    Date    = converted_dates,
+    PX_BID  = as.numeric(px_bid_values),
+    PX_ASK  = as.numeric(px_ask_values),
+    PX_LAST = as.numeric(px_last_values),
+    stringsAsFactors = FALSE
+  )
+  
+  all_data[[ticker]] <- chunk
+}
+
+final_data <- do.call(rbind, all_data)
+rm(chunk,all_data,df_raw)
+```
+
+## Period for which data is available and names 
+
+```{r}
+ticker_mapping <- tribble(
+  ~Ticker,           ~Name,                                 ~Asset_Class,
+  # ---------------------------
+  # “Crude Oil” => “SPGCBRP Index” => “COx Comdty”
+  "SPGCBRP Index",    "Crude Oil",                          "Commodity",
+  "CO1 Comdty",       "Crude Oil",                          "Commodity",
+  "CO2 Comdty",       "Crude Oil",                          "Commodity",
+  "CO3 Comdty",       "Crude Oil",                          "Commodity",
+  
+  # Gasoil
+  "SPGCGOP Index",    "Gasoil",                             "Commodity",
+  "QS1 Comdty",       "Gasoil",                             "Commodity",
+  "QS2 Comdty",       "Gasoil",                             "Commodity",
+  "QS3 Comdty",       "Gasoil",                             "Commodity",
+  
+  # WTI Crude
+  "SPGCCLP Index",    "WTI Crude",                          "Commodity",
+  "CL1 Comdty",       "WTI Crude",                          "Commodity",
+  "CL2 Comdty",       "WTI Crude",                          "Commodity",
+  "CL3 Comdty",       "WTI Crude",                          "Commodity",
+  
+  # RBOB Gasoline
+  "SPGCHUP Index",    "RBOB Gasoline",                      "Commodity",
+  "XB1 Comdty",       "RBOB Gasoline",                      "Commodity",
+  "XB2 Comdty",       "RBOB Gasoline",                      "Commodity",
+  "XB3 Comdty",       "RBOB Gasoline",                      "Commodity",
+  
+  # Heating Oil
+  "SPGCHOP Index",    "Heating Oil",                        "Commodity",
+  "HO1 Comdty",       "Heating Oil",                        "Commodity",
+  "HO2 Comdty",       "Heating Oil",                        "Commodity",
+  "HO3 Comdty",       "Heating Oil",                        "Commodity",
+  
+  # Natural Gas
+  "SPGCNGP Index",    "Natural Gas",                        "Commodity",
+  "NG1 Comdty",       "Natural Gas",                        "Commodity",
+  "NG2 Comdty",       "Natural Gas",                        "Commodity",
+  "NG3 Comdty",       "Natural Gas",                        "Commodity",
+  
+  # Corn
+  "SPGCCNP Index",    "Corn",                               "Commodity",
+  "C 1 Comdty",       "Corn",                               "Commodity",
+  "C 2 Comdty",       "Corn",                               "Commodity",
+  "C 3 Comdty",       "Corn",                               "Commodity",
+  
+  # Soybeans
+  "SPGCSOP Index",    "Soybeans",                           "Commodity",
+  "S 1 Comdty",       "Soybeans",                           "Commodity",
+  "S 2 Comdty",       "Soybeans",                           "Commodity",
+  "S 3 Comdty",       "Soybeans",                           "Commodity",
+  
+  # Wheat
+  "SPGCWHP Index",    "Wheat",                              "Commodity",
+  "W 1 Comdty",       "Wheat",                              "Commodity",
+  "W 2 Comdty",       "Wheat",                              "Commodity",
+  "W 3 Comdty",       "Wheat",                              "Commodity",
+  
+  # Kansas Wheat
+  "SPGCKWP Index",    "Kansas Wheat",                       "Commodity",
+  "KW1 Comdty",       "Kansas Wheat",                       "Commodity",
+  "KW2 Comdty",       "Kansas Wheat",                       "Commodity",
+  "KW3 Comdty",       "Kansas Wheat",                       "Commodity",
+  
+  # Lean hogs
+  "SPGCLHP Index",    "Lean Hogs",                          "Commodity",
+  "LH1 Comdty",       "Lean Hogs",                          "Commodity",
+  "LH2 Comdty",       "Lean Hogs",                          "Commodity",
+  "LH3 Comdty",       "Lean Hogs",                          "Commodity",
+  
+  # Feeder cattle
+  "SPGCFCP Index",    "Feeder Cattle",                      "Commodity",
+  "FC1 Comdty",       "Feeder Cattle",                      "Commodity",
+  "FC2 Comdty",       "Feeder Cattle",                      "Commodity",
+  "FC3 Comdty",       "Feeder Cattle",                      "Commodity",
+  
+  # Live cattle
+  "SPGCLCP Index",    "Live Cattle",                        "Commodity",
+  "LC1 Comdty",       "Live Cattle",                        "Commodity",
+  "LC2 Comdty",       "Live Cattle",                        "Commodity",
+  "LC3 Comdty",       "Live Cattle",                        "Commodity",
+  
+  # Gold
+  "SPGCGCP Index",    "Gold",                               "Commodity",
+  "GC1 Comdty",       "Gold",                               "Commodity",
+  "GC2 Comdty",       "Gold",                               "Commodity",
+  "GC3 Comdty",       "Gold",                               "Commodity",
+  
+  # Silver
+  "SPGCSIP Index",    "Silver",                             "Commodity",
+  "SI1 Comdty",       "Silver",                             "Commodity",
+  "SI2 Comdty",       "Silver",                             "Commodity",
+  "SI3 Comdty",       "Silver",                             "Commodity",
+  
+  # Aluminum
+  "SPGCIAP Index",    "Aluminum",                           "Commodity", 
+  # Nickel
+  "SPGCIKP Index",    "Nickel",                             "Commodity",
+  # Lead
+  "SPGCILP Index",    "Lead",                               "Commodity",
+  # Zinc
+  "SPGCIZP Index",    "Zinc",                               "Commodity",
+  
+  # Coffee
+  "SPGCKCP Index",    "Coffee",                             "Commodity",
+  "KC1 Comdty",       "Coffee",                             "Commodity",
+  "KC2 Comdty",       "Coffee",                             "Commodity",
+  "KC3 Comdty",       "Coffee",                             "Commodity",
+  
+  # Cocoa
+  "SPGCCCP Index",    "Cocoa",                              "Commodity",
+  "CC1 Comdty",       "Cocoa",                              "Commodity",
+  "CC2 Comdty",       "Cocoa",                              "Commodity",
+  "CC3 Comdty",       "Cocoa",                              "Commodity",
+  
+  # Sugar
+  "SPGCSBP Index",    "Sugar",                              "Commodity",
+  "SB1 Comdty",       "Sugar",                              "Commodity",
+  "SB2 Comdty",       "Sugar",                              "Commodity",
+  "SB3 Comdty",       "Sugar",                              "Commodity",
+  
+  # Zero-coupon/Futures (Fixed Income)
+  "F08210y Index",    "US 10y (TYx Comdty)",                "Other",
+  "F08209Y Index",    "US 9y (TYx Comdty)",                 "Other",
+  "F10110y Index",    "Canada 10y (CNx Comdty)",            "Other",
+  "F10109Y Index",    "Canada 9y (CNx Comdty)",             "Other",
+  "F91010y Index",    "Germany 10y (RXx Comdty)",           "Other",
+  "F91009Y Index",    "Germany 9y (RXx Comdty)",            "Other",
+  "F11010y Index",    "UK 10y (Gx Comdty)",                 "Other",
+  "F11009Y Index",    "UK 9y (Gx Comdty)",                  "Other",
+  "F10510y Index",    "Japan 10y (JBx Comdty)",             "Other",
+  "F10509Y Index",    "Japan 9y (JBx Comdty)",              "Other",
+  "F12710y Index",    "Australia 10y (XMx Comdty)",         "Other",
+  "F12709Y Index",    "Australia 9y (XMx Comdty)",          "Other",
+  "F25010y Index",    "New Zealand 10y",                    "Other",
+  "F25009Y Index",    "New Zealand 9y",                     "Other",
+  "F26610y Index",    "Norway 10y",                         "Other",
+  "F26609Y Index",    "Norway 9y",                          "Other",
+  "F25910y Index",    "Sweden 10y",                         "Other",
+  "F25909Y Index",    "Sweden 9y",                          "Other",
+  "F25610y Index",    "Switzerland 10y",                    "Other",
+  "F25609Y Index",    "Switzerland 9y",                     "Other",
+  
+  # Equity indices
+  "AEX Index",                     "AEX (The Netherlands)",         "Equity",
+  "AS51 Index",                    "S&P/ASX 200 (Australia)",         "Equity",
+  "CAC Index",                     "CAC 40 (France)",                "Equity",
+  
+  # Futures
+  "CF1 Index",                     "1st French Future",              "Other",
+  "CF2 Index",                     "2nd French Future",              "Other",
+  "CN1 Comdty",                    "Canadian 10-Year Treasury Note Futures (First Month)",            "Other",
+  "CN2 Comdty",                    "Canadian 10-Year Treasury Bonds Futures (Second Month)",            "Other",
+  
+  # Cotton (Commodity)
+  "CT1 Comdty",                    "Cotton",                         "Commodity",
+  "CT2 Comdty",                    "Cotton",                         "Commodity",
+  "CT3 Comdty",                    "Cotton",                         "Commodity",
+  
+  "EO1 Index",                     "1st Dutch Future",               "Other",
+  "EO2 Index",                     "2nd Dutch Future",               "Other",
+  
+  "FTSEMIB Index",                 "MIB (Italy)",                    "Equity",
+  
+  "G 1 Comdty",                    "UK 10-Year Treasury Note Futures (First Month)",                  "Other",
+  "G 2 Comdty",                    "UK 10-Year Treasury Bonds Futures (Second Month)",                  "Other",
+  
+  "GX1 Index",                     "1st German Future",              "Other",
+  "GX2 Index",                     "2nd German Future",              "Other",
+  
+  "HI1 Index",                     "1st Hong Kong Future",           "Other",
+  "HI2 Index",                     "2nd Hong Kong Future",           "Other",
+  
+  "HSI Index",                     "Hang Seng (Hong Kong)",          "Equity",
+  
+  "IB1 Index",                     "1st Spanish Future",             "Other",
+  "IB2 Index",                     "2nd Spanish Future",             "Other",
+  
+  "IBEX Index",                    "IBEX (Spain)",                   "Equity",
+   "DAX Index",                     "DAX (Germany)",          "Equity",
+  "JB1 Comdty",                    "Japanese 10-Year Treasury Note Futures (First Month)",            "Other",
+  "JB2 Comdty",                    "Japanese 10-Year Treasury Bonds Futures (Second Month)",            "Other",
+  
+  "LMAHDS03 Comdty",               "Aluminum (3-month rolling futures)", "Commodity",
+  "LMAHDY Comdty",                "Aluminum (Daily Prices)",        "Commodity",
+  "LMCADS03 Comdty",               "Copper (3-month rolling futures)", "Commodity",
+  "LMCADY Comdty",                "Copper (Daily Prices)",          "Commodity",
+  "LMNIDS03 Comdty",               "Nickel (3-month rolling futures)",   "Commodity",
+  "LMNIDY Comdty",                "Nickel (Daily Prices)",          "Commodity",
+  "LMPBDS03 Comdty",               "Lead (3-month rolling futures)", "Commodity",
+  "LMPBDY Comdty",                "Lead (Daily Prices)",            "Commodity",
+  "LMZSD03 Comdty",               "Zinc (3-month rolling futures)", "Commodity",
+  "LMZSDY Comdty",                "Zinc (Daily Prices)",            "Commodity",
+  
+  "MME1 Index",                    "1st EM Future",                  "Other",
+  "MME2 Index",                    "2nd EM Future",                  "Other",
+  
+  "MXEF Index",                    "MXEF Index",    "Equity",
+  
+  "NK1 Index",                     "1st Japanese Future",            "Other",
+  "NK2 Index",                     "2nd Japanese Future",            "Other",
+  
+  "NKY Index",                     "Nikkei (Japan)",                 "Equity",
+  
+  "OMX Index",                     "OMX (Sweden)",                   "Equity",
+  
+  "PT1 Index",                     "1st Canadian Future",          "Other",
+  "PT2 Index",                     "2nd Canadian Future",          "Other",
+  
+  "QC1 Index",                     "1st Swedish Future", "Other",
+  "QC2 Index",                     "2nd Swedish Future", "Other",
+  
+  "RX1 Comdty",                    "German 10-Year Treasury Note Futures (First Month)",           "Other",
+  "RX2 Comdty",                    "German 10-Year Treasury Bonds Futures (Second Month)",           "Other",
+  
+  "SM1 Index",                     "1st Swiss Future",               "Other",
+  "SM2 Index",                     "2nd Swiss Future",               "Other",
+  
+  "SMI Index",                     "SMI (Switzerland)",              "Equity",
+  
+  "SP1 Index",                     "1st American Future",    "Other",
+  "SP2 Index",                     "2nd American Future",    "Other",
+  
+  "SPGCCTP Index",                 "Cotton", "Commodity",
+  "SPGCICP Index",                 "Copper", "Commodity",
+  
+  "SPTSX60 Index",                 "SPTSX60 Index (Canada)",         "Equity",
+  "SPX Index",                     "S&P 500 Index (America)",        "Equity",
+  
+  "ST1 Index",                     "1st Italian Future",             "Other",
+  "ST2 Index",                     "2nd Italian Future",             "Other",
+  
+  "SX5E Index",                    "EURO STOXX 50 Index",            "Equity",
+  "SXXP Index (no good futures)",  "STOXX Europe 600 Index",         "Equity",
+  
+  "TY1 Comdty",                    "American 10-Year Treasury Note Futures (First Month)", "Other",
+  "TY2 Comdty",                    "American 10-Year Treasury Bonds Futures (Second Month)", "Other",
+  
+  "UKX Index",                     "FTSE 100 Index (UK)",            "Equity",
+  
+  "USGG3M Index",                  "U.S. Treasury 3-Month Bill Index", "Other",
+  
+  "VG1 Index",                     "1st EURO STOXX 50 Future",                  "Other",
+  "VG2 Index",                     "2nd EURO STOXX 50 Future",                  "Other",
+  
+  "XM1 Comdty",                    "Australian 10-Year Treasury Note Futures (First Month)", "Other",
+  "XM2 Comdty",                    "Australian 10-Year Treasury Bonds Futures (Second Month)", "Other",
+  
+  "XP1 Index",                     "1st Australian Future",          "Other",
+  "XP2 Index",                     "2nd Australian Future",          "Other",
+  
+  "Z 1 Index",                     "1st UK Future","Other",
+  "Z 2 Index",                     "2nd UK Future", "Other"
+)
+
+final_data <- final_data %>%
+  left_join(ticker_mapping, by = "Ticker")
+
+
+
+# Table 1: For rows where all three columns have data
+table_all <- final_data %>% 
+  filter(!is.na(PX_BID) & !is.na(PX_ASK) & !is.na(PX_LAST)) %>% 
+  group_by(Ticker, Name, Asset_Class) %>% 
+  summarise(
+    Start_Date = min(Date, na.rm = TRUE),
+    End_Date   = max(Date, na.rm = TRUE)
+  ) %>%
+  ungroup()
+
+# Table 2: For rows where PX_LAST is available
+table_pxlast <- final_data %>% 
+  filter(!is.na(PX_LAST)) %>% 
+  group_by(Ticker, Name, Asset_Class) %>% 
+  summarise(
+    Start_Date = min(Date, na.rm = TRUE),
+    End_Date   = max(Date, na.rm = TRUE)
+  ) %>%
+  ungroup()
+
+final_data <- final_data %>%
+  filter(!is.na(Date))
+```
+
+### Commodities
+
+```{r}
+library(readxl)
+library(dplyr)
+library(purrr)
+library(tidyr)
+library(lubridate)
+
+## ------------------------------------------------------------------
+## 1)  reads expiry sheet  (A6:HT1000)
+## ------------------------------------------------------------------
+expiry_file <- "Expiry_Master.xlsx"
+raw <- read_excel(expiry_file, range = "A6:HT1000", col_names = FALSE)
+
+## ------------------------------------------------------------------
+## 2)  locates front‑month blocks  “… 1 Comdty”  (no digit before the 1)
+##     row 1 of `raw` is Excel row 6 with the headers “CL1 Comdty”, …
+## ------------------------------------------------------------------
+first_cols <- which(grepl("(?<!\\d)1 Comdty$", raw[1, ] %>% as.character(),
+                          perl = TRUE))
+
+## ------------------------------------------------------------------
+## 3)  for each block: builds the whole vector of expiry dates
+##     rows 2:+   (Excel 7:+), 4th col in block = Date2 = expiry
+## ------------------------------------------------------------------
+extract_family <- function(df, start_col) {
+  fam   <- df[1, start_col] %>% as.character() %>% sub("1 Comdty$", "", .)
+  dates_raw <- df[-1, start_col + 3] %>% unlist() %>% as.numeric()
+  dates_raw <- dates_raw[!is.na(dates_raw)]
+  tibble(
+    Family = fam,
+    idx    = seq_along(dates_raw),                         # 1,2,3,…
+    Expiry = as.Date(dates_raw, origin = "1899-12-30")
+  )
+}
+
+expiry_chain <- map_dfr(first_cols, extract_family, df = raw)
+
+## ------------------------------------------------------------------
+## 4)  adds Family / leg info to every row of final_data
+##     leg = the digit (1/2/3) in ticker; Family = ticker w/o “<d> Comdty”
+## ------------------------------------------------------------------
+final_data <- final_data %>%
+  mutate(
+    Family = sub("\\d+ Comdty$", "", Ticker),
+    leg    = as.integer(sub(".*?(\\d+) Comdty$", "\\1", Ticker))
+  )
+
+## ------------------------------------------------------------------
+## 5)  merges expiry chains   →   each family now has a vector `Expiry_vec`
+## ------------------------------------------------------------------
+expiry_lists <- expiry_chain %>%
+  arrange(Family, idx) %>%
+  group_by(Family) %>%
+  summarise(Expiry_vec = list(Expiry), .groups = "drop")
+
+final_data <- final_data %>%
+  left_join(expiry_lists, by = "Family")          # keeps non‑commodity rows (Expiry_vec = NA)
+
+## ------------------------------------------------------------------
+## 6) rolling 3‑contract window (rolls ON the actual expiry date)
+## ------------------------------------------------------------------
+final_data <- final_data %>%
+  group_by(Family) %>%
+  mutate(
+    days_to_expiry = if (all(is.na(Expiry_vec[[1L]]))) NA_integer_ else {
+      exps  <- Expiry_vec[[1L]]
+
+      shift <- findInterval(Date, exps)              # 0,1,2,…
+
+      current_expiry <- case_when(
+        leg == 1 ~ exps[ pmin(shift + 1L, length(exps)) ],
+        leg == 2 ~ exps[ pmin(shift + 2L, length(exps)) ],
+        leg == 3 ~ exps[ pmin(shift + 3L, length(exps)) ]
+      )
+
+      as.integer(current_expiry - Date)
+    }
+  ) %>%
+  ungroup() %>%
+  select(-Family, -leg, -Expiry_vec)
+
+rm(expiry_chain,expiry_lists,raw)
+```
+
+### Equities
+
+```{r}
+## ------------------------------------------------------------------
+## 1) reads the raw “index” area  (HS .. OC)
+## ------------------------------------------------------------------
+raw_idx <- readxl::read_excel(
+  "Expiry_Master.xlsx",
+  range = "HS6:MH1000",
+  col_names = FALSE
+)
+
+## ------------------------------------------------------------------
+## 2) locates the header cells that end with “1 Index”
+##    then slides right until it hits the first non‑blank → that’s col 1
+##    of the 4‑column block
+## ------------------------------------------------------------------
+all_cols <- seq_along(raw_idx)
+hdr_cols <- all_cols[ grepl("(?<!\\d)1 Index$", raw_idx[1,] %>% as.character(),
+                            perl = TRUE) ]
+
+first_cols_idx <- vapply(
+  hdr_cols,
+  \(hc){
+    pos <- hc
+    while (pos <= ncol(raw_idx) && is.na(raw_idx[1, pos])) pos <- pos + 1
+    pos         # real “start_col”
+  },
+  integer(1)
+)
+
+## ------------------------------------------------------------------
+## 3) helper: builds one family’s expiry chain (two legs)
+## ------------------------------------------------------------------
+extract_idx <- function(df, start_col) {
+
+  family <- df[1, start_col] |>
+              as.character() |>
+              sub("1 Index$", "", x = _)
+
+  ## raw values under the header - may contain "", "NA", etc.
+  dates_raw <- df[-1, start_col + 2] |> unlist()
+
+  ## keeps only numeric entries
+  excel_nums <- suppressWarnings(as.numeric(dates_raw))
+  excel_nums <- excel_nums[!is.na(excel_nums) & excel_nums > 0]
+
+  tibble(
+    Family = family,
+    idx    = seq_along(excel_nums),                       # 1, 2, …
+    Expiry = as.Date(excel_nums, origin = "1899-12-30")   # ASCII minus!
+  )
+}
+
+## builds the full expiry table -----------------------------------------
+expiry_idx <- purrr::map_dfr(first_cols_idx, extract_idx, df = raw_idx)
+expiry_lists_idx <- expiry_idx %>%          # the tibble of raw expiries
+  arrange(Family, idx) %>%                  # guarantees ordering
+  group_by(Family) %>% 
+  summarise(
+    Expiry_vec_idx = list(sort(na.omit(Expiry))),   # <- removes NAs & sorts
+    .groups = "drop"
+  )
+final_data <- final_data %>%
+  ## identifies Index futures ------------------------------------------
+  mutate(
+    IsIndex = grepl("\\d+ Index$", Ticker),
+    FamilyI = if_else(IsIndex, sub("\\d+ Index$", "", Ticker), NA_character_),
+    legI    = if_else(IsIndex,
+                      as.integer(sub(".*?(\\d+) Index$", "\\1", Ticker)),
+                      NA_integer_)
+  ) %>%
+  ## brings in the expiry chains -------------------------
+  left_join(expiry_lists_idx, by = c(FamilyI = "Family")) %>%
+
+  ## one‑row‑at‑a‑time calculation - avoids NULL/size‑mismatch issues -
+  rowwise() %>%
+  mutate(
+    days_to_expiry_idx = {
+
+      ## only does the math for real Index rows that have an expiry vector
+      if (!IsIndex || length(Expiry_vec_idx) == 0L) {
+        NA_integer_
+
+      } else {
+        exps  <- Expiry_vec_idx              # vector(Date)
+        shift <- findInterval(Date, exps)    # 0,1,2 …
+        idx   <- pmin(shift + legI, length(exps))
+        as.integer(exps[idx] - Date)         # Date - Date
+      }
+    }
+  ) %>%
+  ungroup() %>%
+
+  ## fills the missing days_to_expiry only where it is NA ---------------
+  mutate(days_to_expiry = coalesce(days_to_expiry, days_to_expiry_idx)) %>%
+  select(-IsIndex, -FamilyI, -legI, -Expiry_vec_idx, -days_to_expiry_idx)
+
+rm(expiry_idx,expiry_lists_idx,raw_idx)
+```
+
+#Graph Data Range
+
+```{r}
+
+# 1) Finds each Name’s first appearance date
+names_first <- final_data %>% 
+  filter(!is.na(Asset_Class), !is.na(Name), !is.na(Date)) %>% 
+  mutate(Date = as_date(Date)) %>%
+  group_by(Asset_Class, Name) %>% 
+  summarize(first_date = min(Date), .groups = "drop")
+
+# 2) Builds a yearly grid from 1980 through 2024
+all_years <- seq.Date(as.Date("1980-01-01"), as.Date("2024-12-31"), by = "year")
+
+# 3) For each (Asset_Class, year) counts how many Names have first_date <= that year
+asset_counts <- expand_grid(
+  Asset_Class = unique(names_first$Asset_Class),
+  year        = all_years
+) %>% 
+  left_join(names_first, by = "Asset_Class") %>% 
+  group_by(Asset_Class, year) %>% 
+  summarize(
+    n_assets = sum(first_date <= year, na.rm = TRUE),
+    .groups  = "drop"
+  )
+
+# 4) Keeps only Commodity & Equity
+asset_counts_filt <- asset_counts %>%
+  filter(Asset_Class %in% c("Commodity", "Equity"))
+
+# 5) Determines for each class the first year with >=5 names
+first_five <- asset_counts_filt %>%
+  filter(n_assets >= 5) %>%
+  group_by(Asset_Class) %>%
+  summarize(first5 = min(year), .groups = "drop")
+
+# 6) Finds the date when both Commodity & Equity have at least 5 (the later of the two)
+both5_date <- max(first_five$first5)
+
+# 7) Plot
+ggplot(asset_counts_filt, aes(x = year, y = n_assets, fill = Asset_Class)) +
+  geom_area(color = "white", size = 0.2, alpha = 0.8) +
+  geom_vline(xintercept = both5_date,
+             linetype   = "dashed",
+             color      = "black") +
+  scale_x_date(
+    breaks      = seq(as.Date("1980-01-01"), as.Date("2020-01-01"), by = "5 years"),
+    date_labels = "%Y",
+    expand      = expansion(mult = c(0, 0.01))
+  ) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.01))) +
+  scale_fill_brewer("Asset Class", palette = "Set2") +
+  labs(
+    title    = "Number of Assets per Asset Class",
+    subtitle = "Commodities & Equity only",
+    x        = "Year",
+    y        = "Cumulative # of distinct Names"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    panel.grid.minor = element_blank(),
+    legend.position  = "right"
+  )
+```
+
+
+# Carry calculation
+
+## Commodity Carry Calculation
+
+```{r monthly_commodity_carry, message=FALSE}
+library(dplyr)
+library(tidyr)
+library(stringr)
+library(lubridate)
+
+comm <- final_data %>%
+  filter(
+    Asset_Class      == "Commodity",
+    !is.na(days_to_expiry),
+    str_detect(Ticker, "(?:1\\s*Comdty$|2\\s*Comdty$)")
+  ) %>%
+  mutate(
+    Contract = if_else(str_detect(Ticker, "1\\s*Comdty$"), "F1", "F2")
+  )
+comm_wide <- comm %>%
+  select(Date, Name, Contract, PX_LAST, days_to_expiry) %>%
+  pivot_wider(
+    names_from  = Contract,
+    values_from = c(PX_LAST, days_to_expiry),
+    values_fn   = first,
+    values_fill = list(PX_LAST        = NA_real_,
+                       days_to_expiry = NA_integer_)
+  ) %>%
+  rename(
+    F1 = PX_LAST_F1,
+    F2 = PX_LAST_F2,
+    T1 = days_to_expiry_F1,
+    T2 = days_to_expiry_F2
+  )
+
+comm_wide_full <- comm_wide  # everything
+comm_wide_pre2012 <- comm_wide_full %>% filter(Date <= as.Date("2012-09-30"))
+
+compute_carry <- function(df) {
+  df %>%
+    filter(!is.na(F1), !is.na(F2), T2 > T1) %>%
+    mutate(
+      F30       = ((T2 - 30)/(T2 - T1)) * F1 + ((30 - T1)/(T2 - T1)) * F2,
+      F0        = (T2/(T2 - T1)) * F1 - (T1/(T2 - T1)) * F2,
+      carry     = (F0 - F30) / F30,
+      carry_ann = carry * 12 * 100
+    )
+}
+
+carry_full    <- compute_carry(comm_wide_full)
+carry_to2012  <- compute_carry(comm_wide_pre2012)
+summary_carry_full <- carry_full %>%
+  drop_na(carry_ann) %>%
+  group_by(Name) %>%
+  summarise(
+    beginning_date        = min(Date),
+    mean_annualized_carry = mean(carry_ann),      
+    sd_annualized_carry   = sd(carry_ann)/sqrt(100)
+  ) %>%
+  ungroup()
+
+summary_carry_to2012 <- carry_to2012 %>%
+  drop_na(carry) %>%
+  group_by(Name) %>%
+  summarise(
+    beginning_date           = min(Date),
+    mean_annualized_carry    = mean(carry_ann),
+    sd_annualized_carry      = sd(carry_ann)/sqrt(100)
+  ) %>%
+  ungroup()
+summary_carry_full
+summary_carry_to2012
+lme_codes <- c(
+  "LMAHDY Comdty","LMAHDS03 Comdty",
+  "LMCADY Comdty","LMCADS03 Comdty",
+  "LMNIDY Comdty","LMNIDS03 Comdty",
+  "LMPBDY Comdty","LMPBDS03 Comdty",
+  "LMZSDY Comdty","LMZSD03 Comdty"
+)
+
+lme1 <- final_data %>%
+  filter(
+    Asset_Class == "Commodity",
+    Ticker %in% lme_codes
+  )  
+lme2 <- lme1 %>%
+  mutate(
+    leg = case_when(
+      str_detect(Ticker, "DY Comdty$")   ~ "Cash",
+      str_detect(Ticker, "03 Comdty$") ~ "ThreeM",
+      TRUE                               ~ NA_character_
+    ),
+    Underlying = str_extract(Name, "^[^(]+") %>% str_trim()
+  ) %>%
+  filter(!is.na(leg))
+lme3 <- lme2 %>%
+  select(Date, Underlying, leg, PX_LAST) %>%
+  arrange(Date) %>%
+  pivot_wider(
+    id_cols      = c(Date, Underlying),
+    names_from   = leg,
+    values_from  = PX_LAST,
+    values_fn    = first
+  )
+lme4 <- lme3 %>%
+  mutate(
+    Dcash   =  0L,
+    DthreeM = 90L
+  )
+lme_synth_full <- lme4 %>%
+  filter(!is.na(Cash), !is.na(ThreeM)) %>%
+  mutate(
+    F1 = ((DthreeM - 30L)/(DthreeM - Dcash))*Cash +
+         ((30L      - Dcash)/(DthreeM - Dcash))*ThreeM,
+    F2 = ( DthreeM         /(DthreeM - Dcash))*Cash -
+         ( Dcash           /(DthreeM - Dcash))*ThreeM,
+    T1 = 30L,
+    T2 =  0L
+  ) %>%
+  select(Date, Underlying, F1, F2, T1, T2)
+lme_synth_to2012 <- lme_synth_full %>%
+  filter(Date <= as.Date("2012-09-30"))
+lme_carry_full <- lme_synth_full %>%
+  mutate(
+    carry      = (F2 - F1) / F1,
+    carry_ann  = carry * 12 * 100  # annualized carry in percent
+  )
+
+lme_carry_to2012 <- lme_synth_to2012 %>%
+  mutate(
+    carry      = (F2 - F1) / F1,
+    carry_ann  = carry * 12 * 100
+  )
+summary_lme_full <- lme_carry_full %>%
+  drop_na(carry_ann) %>%
+  group_by(Underlying) %>%
+  summarise(
+    first_date       = min(Date),
+    mean_carry_ann   = mean(carry_ann),
+    sd_carry_ann     = sd(carry_ann)
+  ) %>%
+  ungroup()
+
+summary_lme_to2012 <- lme_carry_to2012 %>%
+  drop_na(carry_ann) %>%
+  group_by(Underlying) %>%
+  summarise(
+    first_date       = min(Date),
+    mean_carry_ann   = mean(carry_ann),
+    sd_carry_ann     = sd(carry_ann)
+  ) %>%
+  ungroup()
+summary_lme_full2 <- summary_lme_full %>%
+  rename(Name = Underlying)
+
+summary_lme_to2012_2 <- summary_lme_to2012 %>%
+  rename(Name = Underlying)
+all_summary_full <- bind_rows(
+  summary_carry_full,
+  summary_lme_full2
+)
+
+all_summary_to2012 <- bind_rows(
+  summary_carry_to2012,
+  summary_lme_to2012_2
+)
+
+rm(comm, comm_wide, comm_wide_pre2012,comm_wide_full, carry_to2012, summary_carry_full, summary_carry_to2012,lme1,lme2,lme3,lme4,lme_carry_to2012,summary_lme_full,summary_lme_to2012_2,summary_lme_to2012,lme_synth_to2012,lme_synth_full,summary_lme_full2)
+```
+
+## Equity Carry Calculation
+
+```{r}
+library(dplyr)
+library(tidyr)
+library(stringr)
+library(lubridate)
+
+
+# 1) little lookup table
+under_mapping <- tribble(
+  ~Spot_Underlying,                    ~Fut_Underlying,
+  "S&P 500 Index (America)",           "American",
+  "SPTSX60 Index (Canada)",            "Canadian",
+  "FTSE 100 Index (UK)",               "UK",
+  "CAC 40 (France)",                   "French",
+  "DAX (Germany)",                     "German",
+  "IBEX (Spain)",                      "Spanish",
+  "MIB (Italy)",                       "Italian",
+  "AEX (The Netherlands)",             "Dutch",
+  "OMX (Sweden)",                      "Swedish",
+  "SMI (Switzerland)",                 "Swiss",
+  "Nikkei (Japan)",                    "Japanese",
+  "Hang Seng (Hong Kong)",             "Hong Kong",
+  "S&P/ASX 200 (Australia)",           "Australian",
+  "EURO STOXX 50 Index",               "EURO STOXX 50",
+  "STOXX Europe 600 Index",            "STOXX Europe 600"   # if needed
+)
+
+spot_eq <- final_data %>%
+  filter(Asset_Class == "Equity") %>%
+  transmute(
+    Date,
+    Underlying = Name,
+    Spot       = as.numeric(PX_LAST)
+  )
+
+
+spot_eq2 <- spot_eq %>%
+  left_join(under_mapping, by = c("Underlying" = "Spot_Underlying")) %>%
+  filter(!is.na(Fut_Underlying)) %>%       # drop ones that don't map
+  rename(Underlying_fut = Fut_Underlying)
+fut_eq <- final_data %>%
+  filter(
+    Asset_Class == "Other",
+    str_detect(Name, "^(1st|2nd)")
+  ) %>%
+  transmute(
+    Date,
+    Underlying = str_trim(str_extract(Name, "(?<=^(1st|2nd) ).*(?= Future)")),
+    leg        = if_else(str_starts(Name, "1st"), "Front", "Second"),
+    Price      = as.numeric(PX_LAST),
+    T          = days_to_expiry
+  )
+fut_wide <- fut_eq %>%
+  pivot_wider(
+    names_from  = leg,
+    values_from = c(Price, T),
+    names_glue  = "{.value}_{leg}"
+  ) %>%
+  rename(
+    FrontPrice  = Price_Front,
+    SecondPrice = Price_Second,
+    T1          = T_Front,
+    T2          = T_Second
+  )
+eq_carry <- spot_eq2 %>%
+  inner_join(fut_wide, by = c("Date","Underlying_fut"="Underlying")) %>%
+  filter(T2 > T1) %>%
+  mutate(
+    F1M  = ((T2 - 30)/(T2 - T1)) * FrontPrice +
+           ((30       - T1)/(T2 - T1)) * SecondPrice,
+    Carry = (Spot - F1M)/F1M
+  )
+eq_carry_full <- eq_carry %>%
+  mutate(
+    carry      = Carry,             # daily excess forward-spot
+    carry_ann  = carry * 12 * 100    # annualized carry in percent
+  )
+
+eq_carry_to2012 <- eq_carry_full %>%
+  filter(Date <= as.Date("2012-09-30"))
+summary_eq_full <- eq_carry_full %>%
+  drop_na(carry_ann) %>%
+  group_by(Underlying_fut) %>%
+  summarise(
+    first_date       = min(Date),
+    mean_carry_ann   = mean(carry_ann),
+    sd_carry_ann     = sd(carry_ann)
+  ) %>%
+  ungroup()
+
+summary_eq_to2012 <- eq_carry_to2012 %>%
+  drop_na(carry_ann) %>%
+  group_by(Underlying_fut) %>%
+  summarise(
+    first_date       = min(Date),
+    mean_carry_ann   = mean(carry_ann),
+    sd_carry_ann     = sd(carry_ann)
+  ) %>%
+  ungroup()
+summary_eq_full2 <- summary_eq_full %>% rename(Name = Underlying_fut)
+summary_eq_to2012_2 <- summary_eq_to2012 %>% rename(Name = Underlying_fut)
+all_summary_full    <- bind_rows(all_summary_full,    summary_eq_full2)
+all_summary_to2012  <- bind_rows(all_summary_to2012,  summary_eq_to2012_2)
+
+all_summary_full <- all_summary_full %>%
+  mutate(
+    first_date            = coalesce(beginning_date,   first_date),
+    mean_annualized_carry = coalesce(mean_annualized_carry, mean_carry_ann),
+    sd_annualized_carry   = coalesce(sd_annualized_carry,   sd_carry_ann)
+  ) %>%
+  select(Name, first_date, mean_annualized_carry, sd_annualized_carry)
+
+all_summary_to2012 <- all_summary_to2012 %>%
+  mutate(
+    first_date            = coalesce(beginning_date,   first_date),
+    mean_annualized_carry = coalesce(mean_annualized_carry, mean_carry_ann),
+    sd_annualized_carry   = coalesce(sd_annualized_carry,   sd_carry_ann)
+  ) %>%
+  select(Name, first_date, mean_annualized_carry, sd_annualized_carry)
+rm(eq_carry, eq_carry_to2012, summary_eq_full, summary_eq_to2012,
+   summary_eq_full2, summary_eq_to2012_2)
+```
+
+
+# Excess Returns Calculation
+
+## Commodities Excess Return
+
+```{r}
+excess_returns <- final_data %>%
+  filter(Asset_Class == "Commodity",
+         !Ticker %in% c("Z 1 Index", "Z 2 Index"),
+         str_starts(Ticker, "SPGC")) %>%
+  select(Date, Name, Excess_Returns = PX_LAST)
+
+# Sets factor levels based on first appearance in excess_returns
+excess_returns <- excess_returns %>%
+  mutate(Name = factor(Name, levels = unique(Name)))
+
+annualized_summary <- excess_returns %>%
+  arrange(Date) %>%
+  group_by(Name) %>%
+  mutate(daily_ret = Excess_Returns / lag(Excess_Returns) - 1) %>%
+  summarise(
+    beginning_date = min(Date[!is.na(daily_ret)], na.rm = TRUE),
+    daily_mean = mean(daily_ret, na.rm = TRUE),
+    daily_sd   = sd(daily_ret, na.rm = TRUE)
+  ) %>%
+  mutate(
+    annualized_mean = daily_mean * 252 * 100,
+    annualized_sd   = daily_sd * sqrt(252) * 100
+  ) %>%
+  ungroup()  # preserves the factor order in the final output
+
+
+# Limits the data to dates up to September 2012 (publication of the original paper)
+excess_returns_filtered <- excess_returns %>%
+  filter(Date <= as.Date("2012-09-30"))
+excess_returns_filtered <- excess_returns_filtered %>%
+  mutate(Name = factor(Name, levels = unique(Name)))
+
+annualized_summary_paper_replication <- excess_returns_filtered %>%
+  arrange(Date) %>%
+  group_by(Name) %>%
+  mutate(daily_ret = Excess_Returns / lag(Excess_Returns) - 1) %>%
+  summarise(
+    beginning_date = min(Date[!is.na(daily_ret)], na.rm = TRUE),
+    daily_mean = mean(daily_ret, na.rm = TRUE),
+    daily_sd   = sd(daily_ret, na.rm = TRUE)
+  ) %>%
+  mutate(
+    annualized_mean = daily_mean * 252 * 100,
+    annualized_sd   = daily_sd * sqrt(252) * 100
+  ) %>%
+  ungroup()
+rm(excess_returns_filtered)
+```
+
+## Equity Excess return
+
+```{r}
+equity_futs <- final_data %>%
+  filter(Asset_Class == "Other",
+         str_detect(Name, "^(1st|2nd)")) %>%
+  mutate(
+    PX_LAST    = as.numeric(PX_LAST),
+    Contract   = if_else(str_starts(Name, "1st"), "Front", "Second"),
+    Underlying = str_trim(str_extract(Name, "(?<=^(1st|2nd) ).*(?= Future)"))
+  )
+equity_wide <- equity_futs %>%
+  select(Date, Underlying, Contract, PX_LAST, days_to_expiry) %>%
+  pivot_wider(
+    names_from  = Contract,
+    values_from = PX_LAST,
+    values_fn   = first,
+    values_fill = list(PX_LAST = NA_real_)
+  )
+calc_days_idx_eq <- function(df) {
+  front_obs <- !is.na(df$days_to_expiry) & !is.na(df$Front)
+  if (sum(front_obs) == 0) {
+    df %>%
+      mutate(
+        days_to_front = NA_integer_,
+        Active_Price  = coalesce(Front, Second)
+      )
+  } else {
+    exps  <- sort(unique(df$Date[front_obs] - df$days_to_expiry[front_obs]))
+    shift <- findInterval(df$Date, exps)
+
+    df %>% mutate(
+      days_to_front = if_else(
+        days_to_expiry > 3,
+        as.integer(exps[pmin(shift + 1L, length(exps))] - Date),
+        as.integer(exps[pmin(shift + 2L, length(exps))] - Date)
+      ),
+      Active_Price = if_else(days_to_front > 3, Front, Second),
+      Active_Price = coalesce(Active_Price, Front, Second)
+    )
+  }
+}
+
+equity_rolled <- equity_wide %>%
+  group_by(Underlying) %>%
+  arrange(Date) %>%
+  group_modify(~ calc_days_idx_eq(.x)) %>%
+  ungroup()
+
+monthly_returns <- equity_rolled %>%
+  group_by(Underlying) %>%
+  arrange(Date) %>%
+  mutate(month = floor_date(Date, "month")) %>%
+  group_by(Underlying, month) %>%
+  slice_tail(n = 1) %>%
+  ungroup() %>%
+  group_by(Underlying) %>%
+  arrange(month) %>%
+  mutate(month_ret = Active_Price / lag(Active_Price) - 1) %>%
+  ungroup()
+
+annualized_full <- monthly_returns %>%
+  group_by(Underlying) %>%
+  summarize(
+    first_month = min(month[!is.na(month_ret)], na.rm = TRUE),
+    mean_m      = mean(month_ret, na.rm = TRUE),
+    sd_m        = sd(month_ret,   na.rm = TRUE)
+  ) %>%
+  mutate(
+    ann_mean = mean_m * 12 * 100,
+    ann_sd   = sd_m   * sqrt(12) * 100
+  ) %>%
+  ungroup()
+
+annualized_up_to_sep2012 <- monthly_returns %>%
+  filter(month <= as.Date("2012-09-30")) %>%
+  group_by(Underlying) %>%
+  summarize(
+    first_month = min(month[!is.na(month_ret)], na.rm = TRUE),
+    mean_m      = mean(month_ret, na.rm = TRUE),
+    sd_m        = sd(month_ret,   na.rm = TRUE)
+  ) %>%
+  mutate(
+    ann_mean = mean_m * 12 * 100,
+    ann_sd   = sd_m   * sqrt(12) * 100
+  ) %>%
+  ungroup()
+
+annualized_full
+annualized_up_to_sep2012
+
+rm(equity_futs,equity_wide)
+
+```
+
+## Combining
+
+```{r}
+comm_full2 <- annualized_summary %>%
+  rename(
+    Name        = Name,
+    beginning   = beginning_date,
+    ann_mean    = annualized_mean,
+    ann_sd      = annualized_sd
+  ) %>%
+  mutate(
+    Asset  = "Commodity",
+    Sample = "Full"
+  ) %>%
+  select(Name, beginning, ann_mean, ann_sd, Asset, Sample)
+
+comm_pre2012_2 <- annualized_summary_paper_replication %>%
+  rename(
+    Name        = Name,
+    beginning   = beginning_date,
+    ann_mean    = annualized_mean,
+    ann_sd      = annualized_sd
+  ) %>%
+  mutate(
+    Asset  = "Commodity",
+    Sample = "Up to 2012"
+  ) %>%
+  select(Name, beginning, ann_mean, ann_sd, Asset, Sample)
+eq_full2 <- annualized_full %>%
+  rename(
+    Name      = Underlying,
+    beginning = first_month
+  ) %>%
+  select(Name, beginning, ann_mean, ann_sd) %>%
+  mutate(
+    Asset  = "Equity",
+    Sample = "Full"
+  )
+
+eq_pre2012_2 <- annualized_up_to_sep2012 %>%
+  rename(
+    Name      = Underlying,
+    beginning = first_month
+  ) %>%
+  select(Name, beginning, ann_mean, ann_sd) %>%
+  mutate(
+    Asset  = "Equity",
+    Sample = "Up to 2012"
+  )
+full_combined_summary      <- bind_rows(comm_full2,     eq_full2)
+pre2012_combined_summary  <- bind_rows(comm_pre2012_2, eq_pre2012_2)
+```
+
+### Without 1st trading day
+
+```{r,eval=FALSE}
+eq_no_first_day <- equity_rolled %>%
+  group_by(Underlying, month = floor_date(Date, "month")) %>%
+  filter(Date != min(Date)) %>%
+  ungroup()
+eq_monthly_rets <- eq_no_first_day %>%
+  group_by(Underlying) %>%
+  arrange(Date) %>%
+  mutate(month = floor_date(Date, "month")) %>%
+  group_by(Underlying, month) %>%
+  slice_tail(n = 1) %>%           # month‑end (still skipping first day)
+  ungroup() %>%
+  group_by(Underlying) %>%
+  arrange(month) %>%
+  mutate(
+    month_ret = Active_Price / lag(Active_Price) - 1
+  ) %>%
+  ungroup()
+annualized_equities_full <- eq_monthly_rets %>%
+  group_by(Underlying) %>%
+  summarise(
+    first_month = min(month[!is.na(month_ret)], na.rm = TRUE),
+    mean_m      = mean(month_ret, na.rm = TRUE),
+    sd_m        = sd(month_ret,   na.rm = TRUE)
+  ) %>%
+  mutate(
+    ann_mean = mean_m * 12 * 100,
+    ann_sd   = sd_m   * sqrt(12) * 100
+  ) %>%
+  ungroup()
+annualized_equities_to2012 <- eq_monthly_rets %>%
+  filter(month <= as.Date("2012-09-30")) %>%
+  group_by(Underlying) %>%
+  summarise(
+    first_month = min(month[!is.na(month_ret)], na.rm = TRUE),
+    mean_m      = mean(month_ret, na.rm = TRUE),
+    sd_m        = sd(month_ret,   na.rm = TRUE)
+  ) %>%
+  mutate(
+    ann_mean = mean_m * 12 * 100,
+    ann_sd   = sd_m   * sqrt(12) * 100
+  ) %>%
+  ungroup()
+
+rm(eq_no_first_day)
+```
+
+## putting returns and carry into one dataframe
+
+```{r}
+library(dplyr)
+library(lubridate)
+
+# ——————————————————————————————————————————————————————————————————————
+# 1) COMMODITIES: builds a monthly-carry series
+# ——————————————————————————————————————————————————————————————————————
+comm_carry_monthly <- bind_rows(
+  carry_full    %>% transmute(Date, Name, carry),
+  lme_carry_full %>% transmute(Date, Name = Underlying, carry)
+) %>%
+  mutate(month = floor_date(Date, "month")) %>%
+  group_by(Name, month) %>%
+  summarise(
+    monthly_carry = mean(carry, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# ——————————————————————————————————————————————————————————————————————
+# 2) COMMODITIES: builds a monthly futures-return series
+# ——————————————————————————————————————————————————————————————————————
+comm_ret_monthly <- excess_returns %>%
+  arrange(Name, Date) %>%
+  group_by(Name) %>%
+  mutate(
+    lag_px = lag(Excess_Returns)
+  ) %>%
+  mutate(month = floor_date(Date, "month")) %>%
+  group_by(Name, month) %>%
+  slice_tail(n = 1) %>%    # end-of-month obs
+  ungroup() %>%
+  filter(!is.na(lag_px)) %>%
+  transmute(
+    Name,
+    month,
+    monthly_ret = Excess_Returns / lag_px - 1
+  )
+
+# ——————————————————————————————————————————————————————————————————————
+# 3) EQUITIES: monthly-carry (map spot-names → futures-names)
+# ——————————————————————————————————————————————————————————————————————
+eq_carry_monthly <- eq_carry_full %>%
+  transmute(Date, Spot_Name = Underlying, carry) %>%
+  left_join(
+    under_mapping,
+    by = c("Spot_Name" = "Spot_Underlying")
+  ) %>% 
+  transmute(
+    Date,
+    Name = Fut_Underlying,
+    carry
+  ) %>%
+  mutate(month = floor_date(Date, "month")) %>%
+  group_by(Name, month) %>%
+  summarise(
+    monthly_carry = mean(carry, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# ——————————————————————————————————————————————————————————————————————
+# 4) EQUITIES: monthly returns
+# ——————————————————————————————————————————————————————————————————————
+eq_ret_monthly <- monthly_returns %>%
+  group_by(Underlying) %>%
+  arrange(month) %>%
+  ungroup() %>%
+  transmute(
+    Name        = Underlying,
+    month       = month,
+    monthly_ret = month_ret
+  )
+# ——————————————————————————————————————————————————————————————————————
+# 5) JOINS within each Asset class
+# ——————————————————————————————————————————————————————————————————————
+comm_panel <- left_join(comm_carry_monthly, comm_ret_monthly,
+                        by = c("Name","month")) %>%
+  mutate(Asset="Commodity")
+
+eq_panel   <- left_join(eq_carry_monthly, eq_ret_monthly,
+                        by = c("Name","month")) %>%
+  mutate(Asset="Equity")
+
+# ——————————————————————————————————————————————————————————————————————
+# 6) STACKS into one master data.frame
+# ——————————————————————————————————————————————————————————————————————
+master_panel <- bind_rows(comm_panel, eq_panel) %>%
+  arrange(Asset, Name, month)
+
+# quick check
+master_panel %>%
+  group_by(Asset, Name) %>%
+  summarise(
+    obs           = n(),
+    first_month   = min(month),
+    last_month    = max(month),
+    avg_carry = mean(monthly_carry, na.rm = TRUE),
+    avg_ret       = mean(monthly_ret,        na.rm = TRUE),
+    .groups="drop"
+  )
+```
+
+# Beginning of Analysis
+
+## Start Jan 1989
+
+```{r}
+master_panel <- master_panel %>%
+  filter(month >= as.Date("1989-01-01"))
+```
+
+## Ranking all securities by carry
+
+```{r}
+carry_ranked <- master_panel %>%
+  group_by(month, Asset) %>%
+  mutate(
+    carry_rank = rank(monthly_carry, ties.method = "average")
+  ) %>%
+  ungroup()
+```
+
+## Applying a Rank-Based Weighing Scheme
+
+```{r}
+
+ranked_weights <- carry_ranked %>%
+  group_by(month, Asset) %>%
+  # 1) raw = rank - (N + 1)/2
+  mutate(
+    N        = n(),
+    raw_rank = carry_rank - (N + 1) / 2
+  ) %>%
+  # 2) normalization z_t = 1 / sum of positive raw_ranks
+  mutate(
+    sum_pos = sum(raw_rank[raw_rank > 0]),
+    z_t     = 1 / sum_pos
+  ) %>%
+  # 3) final weight
+  mutate(
+    w_it = raw_rank * z_t
+  ) %>%
+  ungroup() %>%
+  # 4) drops the NaNs
+  filter(!is.na(w_it))
+
+# quick check: should be +1 long, -1 short each month/Asset
+ranked_weights %>%
+  group_by(month, Asset) %>%
+  summarise(
+    long_notional  = sum(w_it[w_it >  0]),
+    short_notional = sum(w_it[w_it <  0]),
+    net            = sum(w_it),
+    .groups="drop"
+  )
+```
+
+## Constructing the portfolio
+
+```{r}
+weights_t <- ranked_weights %>%
+  select(Asset, Name, month, w_it) %>%
+  rename(weight_month = month)
+rets_t1 <- master_panel %>%
+  select(Asset, Name, month, monthly_ret) %>%
+  rename(return_month = month,
+         r_it1        = monthly_ret)
+portf   <- weights_t %>%
+  mutate(return_month = weight_month %m+% months(1)) %>%  
+  left_join(rets_t1, by = c("Asset","Name","return_month")) %>%
+  filter(!is.na(r_it1))  
+
+portf_ret <- portf %>%
+  mutate(contribution = w_it * r_it1) %>%
+  group_by(return_month) %>%
+  summarise(
+    portfolio_ret = sum(contribution),
+    .groups = "drop"
+  ) %>%
+  arrange(return_month)
+portf_ret <- portf %>%
+  mutate(contribution = w_it * r_it1) %>%
+  group_by(return_month) %>%
+  summarise(
+    carry_portf = sum(contribution),
+    eq_portf    = mean(r_it1),
+    .groups = "drop"
+  ) %>%
+  arrange(return_month)
+
+
+```
+
+### Graph of cumulative returns of the Carry and EW portfolio
+
+```{r}
+
+regimes <- tribble(
+  ~type,    ~start,       ~end,         ~label,                    ~color,
+  "Good",   "1999-01-01","2008-12-31",  "Commodity Supercycle",    "forestgreen",
+  "Good",   "2010-01-01","2011-12-31",  "Commodity Rebound",       "forestgreen",
+  "Bad",    "1986-01-01","1986-12-31",  "Oil Price Collapse",      "firebrick",
+  "Bad",    "1997-07-01","1998-12-31",  "Asian Financial Crisis",  "firebrick",
+  "Bad",    "2007-01-01","2008-12-31",  "Food Crisis / GFC",       "firebrick",
+  "Bad",    "2014-01-01","2016-12-31",  "Oil Price Crash",         "firebrick",
+  "Bad",    "2015-01-01","2016-12-31",  "Metals Collapse",         "firebrick",
+  "Bad",    "2020-03-01","2020-12-31",  "COVID-19 Crisis",         "firebrick"
+) %>%
+  mutate(start = ymd(start), end = ymd(end))
+
+plot_df <- portf_ret %>%
+  arrange(return_month) %>%
+  transmute(
+    date       = return_month,
+    carry_cum  = cumprod(1 + carry_portf) - 1,
+    equal_cum  = cumprod(1 + eq_portf)    - 1
+  ) %>%
+  pivot_longer(
+    c(carry_cum, equal_cum),
+    names_to  = "strategy",
+    values_to = "cum_ret"
+  )
+
+ggplot() +
+  geom_rect(data = regimes,
+            aes(xmin = start, xmax = end,
+                ymin = -Inf,   ymax = Inf,
+                fill = type),
+            alpha = 0.15, inherit.aes = FALSE) +
+  geom_vline(xintercept = as.Date("2013-07-26"),
+             color = "gray40", linetype = "dashed") +
+  annotate("text",
+           x = as.Date("2013-07-26"),
+           y = Inf,
+           label = "Paper Published\n2013-07-26",
+           vjust = -0.2, hjust = 1.1,
+           angle = 90,
+           size = 2.5,
+           color = "gray40") +
+  geom_line(data = plot_df,
+            aes(x = date, y = cum_ret, color = strategy),
+            size = 1) +
+  geom_text(data = regimes,
+            aes(x     = start + (end - start)/2,
+                y     = Inf,
+                label = label,
+                color = type),
+            vjust = 1.2, hjust = 1,
+            size  = 2.5,
+            angle = 45,
+            show.legend = FALSE) +
+  scale_y_continuous(labels = percent_format(accuracy = 1)) +
+  scale_fill_manual(values = c(Good = "forestgreen", Bad = "firebrick"),
+                    guide  = "none") +
+  scale_color_manual(
+    values = c(
+      carry_cum = "steelblue",
+      equal_cum = "firebrick",
+      Good      = "forestgreen",
+      Bad       = "firebrick"
+    ),
+    breaks = c("carry_cum","equal_cum"),
+    labels = c("Carry-Weighted","Equal-Weighted"),
+    name   = "Strategy"
+  ) +
+  labs(
+    title = "Carry vs Equal-Weighted: Cumulative Excess Return",
+    x     = "Date",
+    y     = "Cumulative Excess Return"
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position      = "bottom",
+    panel.grid.major.x   = element_blank(),
+    panel.grid.minor.x   = element_blank()
+  )
+```
+
+
+#### before and after publication
+
+```{r}
+# publication split date
+split_date <- as_date("2013-07-26")
+
+# 1) Pre-publication: filters and computes cumulative carry
+carry_pre <- portf_ret %>%
+  filter(return_month < split_date) %>%
+  arrange(return_month) %>%
+  mutate(
+    CumCarry = cumprod(1 + carry_portf) - 1
+  )
+
+# 2) Post-publication: filters and computes cumulative carry
+carry_post <- portf_ret %>%
+  filter(return_month > split_date) %>%
+  arrange(return_month) %>%
+  mutate(
+    CumCarry = cumprod(1 + carry_portf) - 1
+  )
+
+# 3) Plot of the pre-publication cumulative carry
+ggplot(carry_pre, aes(x = return_month, y = CumCarry)) +
+  geom_line(color = "steelblue", size = 1) +
+  scale_y_continuous(labels = percent_format(accuracy = 0.1)) +
+  labs(
+    title = "Cumulative Carry Return (Pre-Publication)",
+    x     = "Date",
+    y     = "Cumulative Return"
+  ) +
+  theme_minimal()
+
+# 4) Plot of the post-publication cumulative carry
+ggplot(carry_post, aes(x = return_month, y = CumCarry)) +
+  geom_line(color = "steelblue", size = 1) +
+  scale_y_continuous(labels = percent_format(accuracy = 0.1)) +
+  labs(
+    title = "Cumulative Carry Return (Post-Publication)",
+    x     = "Date",
+    y     = "Cumulative Return"
+  ) +
+  theme_minimal()
+```
+
+### Table of Returns and Statistics
+
+```{r}
+rf3m_raw <- read_excel(
+  path      = "USGG3M_Index.xlsx",
+  skip      = 8,
+  col_names = c("Date", "PX_BID", "Change", "Pct_Change", 
+                "PX_LAST", "Change2", "Pct_Change2")
+)
+rf3m_daily <- rf3m_raw %>%
+  select(Date, PX_LAST) %>%
+  filter(!is.na(Date)) %>%              
+  mutate(Date = as_date(Date)) %>%
+  arrange(Date)
+rf3m_daily <- rf3m_daily %>%
+  mutate(
+    yield = PX_LAST,                     
+    yield = na.approx(yield, x = Date, na.rm = FALSE),
+    yield = na.locf(yield, na.rm = FALSE),             
+    yield = na.locf(yield, fromLast = TRUE, na.rm = FALSE)  
+  )
+rf_usd_3m <- rf3m_daily %>%
+  mutate(month = floor_date(Date, "month")) %>%
+  group_by(month) %>%
+  summarise(
+    rf_monthly = mean(yield, na.rm = TRUE) / 100 / 12,
+    .groups    = "drop"
+  )
+portf_ret_rf <- portf_ret %>%
+  left_join(rf_usd_3m,
+            by = c("return_month" = "month")) %>%
+  arrange(return_month)
+
+
+perf_table_monthly <- portf_ret_rf %>%
+  pivot_longer(
+    cols      = c(carry_portf, eq_portf),
+    names_to  = "Strategy",
+    values_to = "Return"
+  ) %>%
+  mutate(Excess = Return) %>%
+  group_by(Strategy) %>%
+  summarise(
+    Mean_m     = mean(Return,       na.rm = TRUE),
+    Sd_m       = sd(Return,         na.rm = TRUE),
+    Skew_m     = skewness(Return,   na.rm = TRUE),
+    Kurt_m     = kurtosis(Return,   na.rm = TRUE),
+    Sharpe_m   = mean(Excess,       na.rm = TRUE) / sd(Excess, na.rm = TRUE),
+    .groups    = "drop"
+  )
+
+perf_table_annual <- perf_table_monthly %>%
+  transmute(
+    Strategy,
+    Mean     = 100 * Mean_m * 12,
+    `St.Dev` = 100 * Sd_m   * sqrt(12),
+    Skewness = Skew_m,
+    Kurtosis = Kurt_m,
+    Sharpe   = Sharpe_m * sqrt(12)
+  )
+
+print(perf_table_annual)
+```
+
+#### Carry before and after publication
+
+```{r}
+split_date <- as_date("2013-07-26")
+carry_all_stats <- portf_ret_rf %>%
+  summarise(
+    Strategy = "Carry (All)",
+    Mean_m   = mean(carry_portf, na.rm = TRUE),
+    Sd_m     = sd(carry_portf,   na.rm = TRUE),
+    Skew_m   = skewness(carry_portf, na.rm = TRUE),
+    Kurt_m   = kurtosis(carry_portf, na.rm = TRUE),
+    Sharpe_m = mean(carry_portf, na.rm = TRUE) / sd(carry_portf, na.rm = TRUE)
+  ) %>%
+  transmute(
+    Strategy,
+    Mean     = 100 * Mean_m * 12,
+    `St.Dev` = 100 * Sd_m   * sqrt(12),
+    Skewness = Skew_m,
+    Kurtosis = Kurt_m,
+    Sharpe   = Sharpe_m    * sqrt(12)
+  )
+carry_pre_stats <- portf_ret_rf %>%
+  filter(return_month < split_date) %>%
+  summarise(
+    Strategy = "Carry (Pre Publication)",
+    Mean_m   = mean(carry_portf, na.rm = TRUE),
+    Sd_m     = sd(carry_portf,   na.rm = TRUE),
+    Skew_m   = skewness(carry_portf, na.rm = TRUE),
+    Kurt_m   = kurtosis(carry_portf, na.rm = TRUE),
+    Sharpe_m = mean(carry_portf, na.rm = TRUE) / sd(carry_portf, na.rm = TRUE)
+  ) %>%
+  transmute(
+    Strategy,
+    Mean     = 100 * Mean_m * 12,
+    `St.Dev` = 100 * Sd_m   * sqrt(12),
+    Skewness = Skew_m,
+    Kurtosis = Kurt_m,
+    Sharpe   = Sharpe_m    * sqrt(12)
+  )
+carry_post_stats <- portf_ret_rf %>%
+  filter(return_month >= split_date) %>%
+  summarise(
+    Strategy = "Carry (Post Publication)",
+    Mean_m   = mean(carry_portf, na.rm = TRUE),
+    Sd_m     = sd(carry_portf,   na.rm = TRUE),
+    Skew_m   = skewness(carry_portf, na.rm = TRUE),
+    Kurt_m   = kurtosis(carry_portf, na.rm = TRUE),
+    Sharpe_m = mean(carry_portf, na.rm = TRUE) / sd(carry_portf, na.rm = TRUE)
+  ) %>%
+  transmute(
+    Strategy,
+    Mean     = 100 * Mean_m * 12,
+    `St.Dev` = 100 * Sd_m   * sqrt(12),
+    Skewness = Skew_m,
+    Kurtosis = Kurt_m,
+    Sharpe   = Sharpe_m    * sqrt(12)
+  )
+carry_split_table <- bind_rows(
+  carry_all_stats,
+  carry_pre_stats,
+  carry_post_stats
+)
+
+print(carry_split_table)
+```
+
+### Individual Table of Returns and Statistics
+
+```{r}
+perf_table_monthly <- portf_ret_rf %>%
+  pivot_longer(
+    cols     = c(carry_portf, eq_portf),
+    names_to = "Strategy",
+    values_to= "Return"
+  ) %>%
+  mutate( Excess = Return ) %>%
+  group_by(Strategy) %>%
+  summarise(
+    Mean_m   = mean(Return,     na.rm=TRUE),
+    Sd_m     = sd(Return,       na.rm=TRUE),
+    Skew_m   = skewness(Return, na.rm=TRUE),
+    Kurt_m   = kurtosis(Return, na.rm=TRUE),
+    Sharpe_m = mean(Excess,     na.rm=TRUE) / sd(Excess, na.rm=TRUE),
+    .groups = "drop"
+  )
+
+perf_table_annual <- perf_table_monthly %>%
+  transmute(
+    Strategy,
+    Mean     = 100 * Mean_m   * 12,
+    `St.Dev` = 100 * Sd_m     * sqrt(12),
+    Skewness = Skew_m,
+    Kurtosis = Kurt_m,
+    Sharpe   = Sharpe_m * sqrt(12)
+  )
+
+comm_stats_annual <- portf %>%
+  filter(Asset=="Commodity") %>%                     
+  group_by(return_month) %>%
+  summarise(
+    CommCarry = sum(w_it * r_it1),
+    .groups="drop"
+  ) %>%
+  arrange(return_month) %>%
+  mutate(Excess = CommCarry) %>%
+  summarise(
+    Strategy  = "Commodity Carry",
+    Mean_m    = mean(CommCarry, na.rm=TRUE),
+    Sd_m      = sd(CommCarry,   na.rm=TRUE),
+    Skew_m    = skewness(CommCarry, na.rm=TRUE),
+    Kurt_m    = kurtosis(CommCarry, na.rm=TRUE),
+    Sharpe_m  = mean(Excess, na.rm=TRUE)/sd(Excess, na.rm=TRUE)
+  ) %>%
+  transmute(
+    Strategy,
+    Mean     = 100 * Mean_m   * 12,
+    `St.Dev` = 100 * Sd_m     * sqrt(12),
+    Skewness = Skew_m,
+    Kurtosis = Kurt_m,
+    Sharpe   = Sharpe_m * sqrt(12)
+  )
+
+equity_stats_annual <- portf %>%
+  filter(Asset=="Equity") %>%                         
+  group_by(return_month) %>%
+  summarise(
+    EqCarry = sum(w_it * r_it1),
+    .groups="drop"
+  ) %>%
+  arrange(return_month) %>%
+  mutate(Excess = EqCarry) %>%
+  summarise(
+    Strategy  = "Equity Carry",
+    Mean_m    = mean(EqCarry, na.rm=TRUE),
+    Sd_m      = sd(EqCarry,   na.rm=TRUE),
+    Skew_m    = skewness(EqCarry, na.rm=TRUE),
+    Kurt_m    = kurtosis(EqCarry, na.rm=TRUE),
+    Sharpe_m  = mean(Excess, na.rm=TRUE)/sd(Excess, na.rm=TRUE)
+  ) %>%
+  transmute(
+    Strategy,
+    Mean     = 100 * Mean_m   * 12,
+    `St.Dev` = 100 * Sd_m     * sqrt(12),
+    Skewness = Skew_m,
+    Kurtosis = Kurt_m,
+    Sharpe   = Sharpe_m * sqrt(12)
+  )
+final_perf_table <- bind_rows(
+  perf_table_annual,
+  comm_stats_annual,
+  equity_stats_annual
+)
+
+print(final_perf_table)
+
+```
+
+#### Ind Statistics pre post
+
+```{r}
+split_date <- as_date("2013-07-26")
+
+compute_stats <- function(monthly_returns, strategy_name) {
+  Mean_m   <- mean(monthly_returns,   na.rm = TRUE)
+  Sd_m     <- sd(monthly_returns,     na.rm = TRUE)
+  Skew_m   <- skewness(monthly_returns, na.rm = TRUE)
+  Kurt_m   <- kurtosis(monthly_returns, na.rm = TRUE)
+  Sharpe_m <- mean(monthly_returns,   na.rm = TRUE) / sd(monthly_returns, na.rm = TRUE)
+  
+  tibble(
+    Strategy = strategy_name,
+    Mean     = 100 * Mean_m * 12,
+    `St.Dev` = 100 * Sd_m   * sqrt(12),
+    Skewness = Skew_m,
+    Kurtosis = Kurt_m,
+    Sharpe   = Sharpe_m    * sqrt(12)
+  )
+}
+
+comm_monthly <- portf %>%
+  filter(Asset == "Commodity") %>%
+  group_by(return_month) %>%
+  summarise(CommCarry = sum(w_it * r_it1, na.rm = TRUE), .groups = "drop") %>%
+  arrange(return_month)
+
+eq_monthly <- portf %>%
+  filter(Asset == "Equity") %>%
+  group_by(return_month) %>%
+  summarise(EqCarry = sum(w_it * r_it1, na.rm = TRUE), .groups = "drop") %>%
+  arrange(return_month)
+
+comm_full  <- compute_stats(comm_monthly$CommCarry,  "Commodity Carry (Full)")
+comm_pre   <- comm_monthly %>%
+  filter(return_month < split_date) %>%
+  pull(CommCarry) %>%
+  compute_stats("Commodity Carry (Pre‐Publication)")
+comm_post  <- comm_monthly %>%
+  filter(return_month >= split_date) %>%
+  pull(CommCarry) %>%
+  compute_stats("Commodity Carry (Post‐Publication)")
+
+eq_full  <- compute_stats(eq_monthly$EqCarry,  "Equity Carry (Full)")
+eq_pre   <- eq_monthly %>%
+  filter(return_month < split_date) %>%
+  pull(EqCarry) %>%
+  compute_stats("Equity Carry (Pre‐Publication)")
+eq_post  <- eq_monthly %>%
+  filter(return_month >= split_date) %>%
+  pull(EqCarry) %>%
+  compute_stats("Equity Carry (Post-Publication")
+
+
+carry_split_table <- bind_rows(
+  comm_full, comm_pre, comm_post,
+  eq_full,  eq_pre,  eq_post
+)
+
+print(carry_split_table)
+```
+
+#### Graph Equities vs. Commodities
+
+```{r}
+comm_plot <- portf %>%
+  filter(Asset == "Commodity") %>%
+  group_by(return_month) %>%
+  summarise(CommCarry = sum(w_it * r_it1, na.rm = TRUE), .groups = "drop") %>%
+  arrange(return_month) %>%
+  mutate(
+    CumReturn = cumprod(1 + CommCarry) - 1,
+    Strategy  = "Commodity"
+  ) %>%
+  select(return_month, CumReturn, Strategy)
+
+eq_plot <- portf %>%
+  filter(Asset == "Equity") %>%
+  group_by(return_month) %>%
+  summarise(EqCarry = sum(w_it * r_it1, na.rm = TRUE), .groups = "drop") %>%
+  arrange(return_month) %>%
+  mutate(
+    CumReturn = cumprod(1 + EqCarry) - 1,
+    Strategy  = "Equity"
+  ) %>%
+  select(return_month, CumReturn, Strategy)
+
+combined <- bind_rows(comm_plot, eq_plot)
+
+ggplot(combined, aes(x = return_month, y = CumReturn, color = Strategy)) +
+  geom_line(size = 1) +
+  scale_y_continuous(labels = percent_format(accuracy = 0.1)) +
+  labs(
+    title = "Cumulative Carry Returns: Commodity vs. Equity",
+    x     = "Month",
+    y     = "Cumulative Return",
+    color = "Strategy"
+  ) +
+  theme_minimal()
+```
+
+#### Pre Post Eq Com
+
+```{r}
+split_date <- as_date("2013-07-26")
+
+comm_monthly <- portf %>%
+  filter(Asset == "Commodity") %>%
+  group_by(return_month) %>%
+  summarise(CommCarry = sum(w_it * r_it1, na.rm = TRUE), .groups = "drop") %>%
+  arrange(return_month)
+
+eq_monthly <- portf %>%
+  filter(Asset == "Equity") %>%
+  group_by(return_month) %>%
+  summarise(EqCarry = sum(w_it * r_it1, na.rm = TRUE), .groups = "drop") %>%
+  arrange(return_month)
+
+comm_pre <- comm_monthly %>%
+  filter(return_month < split_date) %>%
+  mutate(CumReturn = cumprod(1 + CommCarry) - 1,
+         Strategy  = "Commodity Carry")
+
+eq_pre <- eq_monthly %>%
+  filter(return_month < split_date) %>%
+  mutate(CumReturn = cumprod(1 + EqCarry) - 1,
+         Strategy  = "Equity Carry")
+
+pre_combined <- bind_rows(
+  comm_pre  %>% select(return_month, CumReturn, Strategy),
+  eq_pre    %>% select(return_month, CumReturn, Strategy)
+)
+
+comm_post <- comm_monthly %>%
+  filter(return_month > split_date) %>%
+  arrange(return_month) %>%
+  mutate(CumReturn = cumprod(1 + CommCarry) - 1,
+         Strategy  = "Commodity Carry")
+
+eq_post <- eq_monthly %>%
+  filter(return_month > split_date) %>%
+  arrange(return_month) %>%
+  mutate(CumReturn = cumprod(1 + EqCarry) - 1,
+         Strategy  = "Equity Carry")
+
+post_combined <- bind_rows(
+  comm_post %>% select(return_month, CumReturn, Strategy),
+  eq_post   %>% select(return_month, CumReturn, Strategy)
+)
+
+ggplot(pre_combined, aes(x = return_month, y = CumReturn, color = Strategy)) +
+  geom_line(size = 1) +
+  scale_y_continuous(labels = percent_format(accuracy = 0.1)) +
+  labs(
+    title = "Cumulative Carry Returns (Pre-Publication)",
+    x     = "Date",
+    y     = "Cumulative Return",
+    color = "Strategy"
+  ) +
+  theme_minimal()
+
+ggplot(post_combined, aes(x = return_month, y = CumReturn, color = Strategy)) +
+  geom_line(size = 1) +
+  scale_y_continuous(labels = percent_format(accuracy = 0.1)) +
+  labs(
+    title = "Cumulative Carry Returns (Post-Publication)",
+    x     = "Date",
+    y     = "Cumulative Return",
+    color = "Strategy"
+  ) +
+  theme_minimal()
+```
+
+#### Comparing Eq and Com
+
+```{r}
+corr_df <- portf_ret_rf %>%
+  select(return_month, carry_portf, eq_portf) %>%
+  drop_na()
+
+corr_mat <- cor(corr_df %>% select(carry_portf, eq_portf))
+print("Correlation matrix:")
+print(corr_mat)
+
+sds <- corr_df %>%
+  summarise(
+    sd_carry = sd(carry_portf, na.rm=TRUE),
+    sd_eq    = sd(eq_portf,    na.rm=TRUE)
+  )
+w_carry <- (1 / sds$sd_carry) / (1/sds$sd_carry + 1/sds$sd_eq)
+w_eq    <- (1 / sds$sd_eq)    / (1/sds$sd_carry + 1/sds$sd_eq)
+
+message(sprintf("Expo-Wt:  Carry = %.3f, Equity = %.3f", w_carry, w_eq))
+
+expo_df <- corr_df %>%
+  transmute(
+    month    = return_month,
+    combo    = carry_portf * w_carry + eq_portf * w_eq
+  )
+
+expo_stats <- expo_df %>%
+  mutate(Excess = combo) %>%
+  summarise(
+    Mean_m   = mean(combo, na.rm=TRUE),
+    Sd_m     = sd(combo,   na.rm=TRUE),
+    Skew_m   = skewness(combo,   na.rm=TRUE),
+    Kurt_m   = kurtosis(combo,   na.rm=TRUE),
+    Sharpe_m = Mean_m / Sd_m
+  ) %>%
+  transmute(
+    Strategy = "Expo-Weighted (1/$sigma$)",
+    Mean     = 100 * Mean_m   * 12,
+    `St.Dev` = 100 * Sd_m     * sqrt(12),
+    Skewness = Skew_m,
+    Kurtosis = Kurt_m,
+    Sharpe   = Sharpe_m * sqrt(12)
+  )
+
+print(expo_stats)
+```
+
+The “Exposure-Weighted Combo” is simply a two-leg portfolio of the Carry-Weighted strategy and the Equity-Weighted strategy, where the weights on each leg are chosen so that each leg contributes the same amount of ex-post risk (volatility) to the overall portfolio.
+
+If one leg is twice as volatile as the other, you only want half as much of it so that each leg ends up contributing equally to the total variance
+
+### Graph of Carry and SP500
+
+```{r}
+regimes <- tribble(
+  ~type,  ~start,       ~end,         ~label,
+  "Good", "1999-01-01","2008-12-31",  "Commodity Supercycle",
+  "Good", "2010-01-01","2011-12-31",  "Commodity Rebound",
+  "Bad",  "1986-01-01","1986-12-31",  "Oil Price Collapse",
+  "Bad",  "1997-07-01","1998-12-31",  "Asian Financial Crisis",
+  "Bad",  "2007-01-01","2008-12-31",  "Food Crisis / GFC",
+  "Bad",  "2014-01-01","2016-12-31",  "Oil Price Crash",
+  "Bad",  "2015-01-01","2016-12-31",  "Metals Collapse",
+  "Bad",  "2020-03-01","2020-12-31",  "COVID-19 Crisis"
+) %>%
+  mutate(
+    start = ymd(start),
+    end   = ymd(end),
+    color = if_else(type=="Good","forestgreen","firebrick")
+  )
+
+spx_monthly <- tq_get("^GSPC", from="1989-01-01", to="2024-12-31", get="stock.prices") %>%
+  select(date, adjusted) %>%
+  mutate(month = floor_date(date, "month")) %>%
+  group_by(month) %>%
+  summarise(month_end = last(adjusted), .groups="drop") %>%
+  arrange(month)
+
+spx_cum <- spx_monthly %>%
+  mutate(spx_ret = month_end / lag(month_end) - 1) %>%
+  filter(!is.na(spx_ret)) %>%
+  left_join(rf_usd_3m, by="month") %>%                        
+  mutate(rf_monthly = replace_na(rf_monthly, 0),
+         spx_exc    = spx_ret - rf_monthly,
+         cum_ret    = cumprod(1 + spx_exc) - 1) %>%
+  select(month, cum_ret) %>%
+  mutate(strategy = "S&P 500 Excess")
+
+carry_cum <- portf_ret %>%
+  arrange(return_month) %>%
+  transmute(month   = return_month,
+            cum_ret = cumprod(1 + carry_portf) - 1) %>%
+  mutate(strategy = "Carry-Weighted")
+
+plot_df <- bind_rows(carry_cum, spx_cum)
+
+ggplot() +
+  # shaded regimes
+  geom_rect(data = regimes,
+            aes(xmin=start, xmax=end, ymin=-Inf, ymax=Inf),
+            fill = regimes$color, alpha=0.15) +
+  # paper published line
+  geom_vline(xintercept=as.Date("2013-07-26"),
+             color="gray40", linetype="dashed") +
+  annotate("text", x=as.Date("2013-07-26"), y=Inf,
+           label="Paper Published\n2013-07-26",
+           angle=90, vjust=-0.2, hjust=1.1,
+           size=2.5, color="gray40") +
+  # strategy lines
+  geom_line(data=plot_df,
+            aes(x=month, y=cum_ret, color=strategy),
+            size=1) +
+  # regime labels
+  geom_text(data=regimes,
+            aes(x=start + (end-start)/2, y=Inf,
+                label=label, color=type),
+            angle=45, vjust=1.2, hjust=1,
+            size=2.5, show.legend=FALSE) +
+  scale_y_continuous(labels=percent_format(accuracy=1)) +
+  scale_color_manual(
+    name="Series / Regime",
+    values=c("Carry-Weighted"  ="steelblue",
+             "S&P 500 Excess"   ="firebrick",
+             "Good"             ="forestgreen",
+             "Bad"              ="firebrick"),
+    breaks=c("Carry-Weighted","S&P 500 Excess"),
+    labels=c("Carry-Weighted","S&P 500 Excess")
+  ) +
+  labs(
+    title="Carry vs S&P 500: Cumulative Excess Return",
+    x="Date", y="Cumulative Excess Return"
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position    ="bottom",
+    panel.grid.major.x =element_blank(),
+    panel.grid.minor.x =element_blank()
+  )
+```
+
+### Table with SP500
+
+```{r}
+spx_perf_monthly <- 
+  tidyquant::tq_get("^GSPC", from = "1980-01-01", to = "2024-12-31", get = "stock.prices") %>%
+  mutate(month = lubridate::floor_date(date, "month")) %>%
+  group_by(month) %>%
+  summarise(
+    price = last(adjusted),
+    .groups = "drop"
+  ) %>%
+  arrange(month) %>%
+  mutate(
+    Return = price / lag(price) - 1
+  ) %>%
+  filter(!is.na(Return)) %>%
+  left_join(rf_usd_3m, by = "month") %>%
+  mutate(
+    rf_monthly = replace_na(rf_monthly, 0),
+    Excess = Return - rf_monthly
+  ) %>%
+  summarise(
+    Strategy  = "S&P 500 Excess",
+    Mean_m    = mean(Return,    na.rm = TRUE),
+    Sd_m      = sd(Return,      na.rm = TRUE),
+    Skew_m    = skewness(Return,na.rm = TRUE),
+    Kurt_m    = kurtosis(Return,na.rm = TRUE),
+    Sharpe_m  = mean(Excess,    na.rm = TRUE) / sd(Excess, na.rm = TRUE)
+  )
+
+perf_table_monthly2 <- 
+  bind_rows(
+    perf_table_monthly,
+    spx_perf_monthly
+  )
+
+perf_table_annual2 <- perf_table_monthly2 %>%
+  transmute(
+    Strategy,
+    Mean     = 100 * Mean_m * 12,
+    `St.Dev` = 100 * Sd_m   * sqrt(12),
+    Skewness = Skew_m,
+    Kurtosis = Kurt_m,
+    Sharpe   = Sharpe_m * sqrt(12)
+  )
+
+print(perf_table_annual2)
+```
+
+## Creating the carry1-12 (moving average)
+
+```{r}
+master_panel_carry1_12 <- master_panel %>%
+  arrange(Asset, Name, month) %>%               
+  group_by(Asset, Name) %>%
+  mutate(
+    carry1_12 = rollapply(
+      data        = monthly_carry,
+      width       = 12,
+      FUN         = mean,
+      align       = "right",
+      fill        = NA,        # will be NA for the first 11 months (expected)
+      na.rm       = TRUE
+    )
+  ) %>%
+  ungroup()
+```
+
+### Constructing portfolio for carry1_12
+
+```{r}
+library(dplyr)
+library(lubridate)
+
+# ——————————————————————————————————————————————————————————————————————
+# 1) RANKS **carry1_12** WITHIN EACH ASSET CLASS
+# ——————————————————————————————————————————————————————————————————————
+carry1_12_ranked <- master_panel_carry1_12 %>%
+  group_by(month, Asset) %>%
+  mutate(
+    carry1_12_rank = rank(carry1_12, ties.method = "average")
+  ) %>%
+  ungroup()
+
+# ——————————————————————————————————————————————————————————————————————
+# 2) BUILDS RANK-BASED WEIGHTS (1/N LONG-SHORT) ON 12-MO RANK
+# ——————————————————————————————————————————————————————————————————————
+ranked_weights_1_12 <- carry1_12_ranked %>%
+  group_by(month, Asset) %>%
+  mutate(
+    N        = n(),
+    raw_rank = carry1_12_rank - (N + 1) / 2,
+    sum_pos  = sum(raw_rank[raw_rank > 0]),      # denominator for normalization
+    z_t      = 1 / sum_pos,                      # scaling so longs sum to +1
+    w_it     = raw_rank * z_t                    # final weight
+  ) %>%
+  ungroup() %>%
+  filter(!is.na(w_it))                           # drops any NaNs
+
+# quick check: each month/Asset should net to zero, longs = +1, shorts = -1
+ranked_weights_1_12 %>%
+  group_by(month, Asset) %>%
+  summarise(
+    long_notional  = sum(w_it[w_it >  0]),
+    short_notional = sum(w_it[w_it <  0]),
+    net            = sum(w_it),
+    .groups="drop"
+  )
+
+# ——————————————————————————————————————————————————————————————————————
+# 3) PREPARES FOR PORTFOLIO CONSTRUCTION
+# ——————————————————————————————————————————————————————————————————————
+# 3a) weights at month t
+weights_t_1_12 <- ranked_weights_1_12 %>%
+  select(Asset, Name, month, w_it) %>%
+  rename(weight_month = month)
+
+# 3b) realized returns at month t+1
+rets_t1 <- master_panel_carry1_12 %>%
+  select(Asset, Name, month, monthly_ret) %>%
+  rename(
+    return_month = month,
+    r_it1        = monthly_ret
+  )
+
+# ——————————————————————————————————————————————————————————————————————
+# 4) JOINS WEIGHTS → NEXT-MONTH RETURNS & SUM UP
+# ——————————————————————————————————————————————————————————————————————
+portf_1_12 <- weights_t_1_12 %>%
+  # align weight at month t with return in t+1
+  mutate(return_month = weight_month %m+% months(1)) %>%
+  left_join(rets_t1, by = c("Asset","Name","return_month")) %>%
+  filter(!is.na(r_it1))
+
+# 4a) carry1_12-weighted P&L
+portf_ret_1_12 <- portf_1_12 %>%
+  mutate(contribution = w_it * r_it1) %>%
+  group_by(return_month) %>%
+  summarise(
+    carry1_12_portf = sum(contribution),
+    .groups = "drop"
+  ) %>%
+  arrange(return_month)
+
+# 4b) an equal-weighted-across-names P&L for carry1_12
+portf_ret_1_12 <- portf_1_12 %>%
+  group_by(return_month) %>%
+  summarise(
+    carry1_12_portf = sum(w_it * r_it1),
+    eq1_12_portf    = mean(r_it1),
+    .groups = "drop"
+  ) %>%
+  arrange(return_month)
+
+#   carry1_12_portf   = the 12-mo-averaged carry-weighted strategy
+#   eq1_12_portf      = the 1/N strategy over the same names
+```
+
+### Table and Plot
+
+```{r}
+portf_ret_1_12_rf <- portf_ret_1_12 %>%
+  rename(month = return_month) %>%
+  left_join(rf_usd_3m, by = "month") %>%
+  arrange(month)
+
+perf_1_12_monthly <- portf_ret_1_12_rf %>%
+  pivot_longer(
+    cols     = c(carry1_12_portf, eq1_12_portf),
+    names_to = "Strategy",
+    values_to= "Return"
+  ) %>%
+  mutate(Excess = Return) %>%
+  group_by(Strategy) %>%
+  summarise(
+    Mean_m   = mean(Excess,     na.rm=TRUE),
+    Sd_m     = sd(Excess,       na.rm=TRUE),
+    Skew_m   = skewness(Excess, na.rm=TRUE),
+    Kurt_m   = kurtosis(Excess, na.rm=TRUE),
+    Sharpe_m = Mean_m / Sd_m,
+    .groups  = "drop"
+  )
+
+perf_1_12_annual <- perf_1_12_monthly %>%
+  transmute(
+    Strategy,
+    Mean     = 100 * Mean_m * 12,
+    `St.Dev` = 100 * Sd_m   * sqrt(12),
+    Skewness = Skew_m,
+    Kurtosis = Kurt_m,
+    Sharpe   = Sharpe_m * sqrt(12)
+  )
+
+print(perf_1_12_annual)
+
+
+plot_1_12_df <- portf_ret_1_12_rf %>%
+  transmute(
+    month        = month,
+    `Carry (1-12)` = cumprod(1 + carry1_12_portf) - 1,
+    `Equal (1-12)` = cumprod(1 + eq1_12_portf)    - 1
+  ) %>%
+  pivot_longer(
+    cols      = c(`Carry (1-12)`, `Equal (1-12)`),
+    names_to  = "Series",
+    values_to = "Cumulative"
+  )
+
+ggplot() +
+  # macro regimes
+  geom_rect(data = regimes,
+            aes(xmin = start, xmax = end,
+                ymin = -Inf,   ymax = Inf),
+            fill   = regimes$color,
+            alpha  = 0.15) +
+  # paper-pub line
+  geom_vline(xintercept = as.Date("2013-07-26"),
+             color = "gray40", linetype = "dashed") +
+  annotate("text",
+           x     = as.Date("2013-07-26"),
+           y     = Inf,
+           label = "Paper Published\n2013-07-26",
+           angle = 90, vjust = -0.2, hjust = 1.1,
+           size = 2.5, color = "gray40") +
+  # the two cum-return lines
+  geom_line(data = plot_1_12_df,
+            aes(x = month, y = Cumulative, color = Series),
+            size = 1) +
+  # regime labels
+  geom_text(data = regimes,
+            aes(x     = start + (end-start)/2,
+                y     = Inf,
+                label = label,
+                color = type),
+            angle = 45, vjust = 1.2, hjust = 1,
+            size = 2.5, show.legend = FALSE) +
+  # scales & legend
+  scale_y_continuous(labels = percent_format(accuracy = 1)) +
+  scale_color_manual(
+    name   = "Strategy",
+    values = c(
+      `Carry (1-12)` = "steelblue",
+      `Equal (1-12)` = "firebrick",
+      Good           = "forestgreen",
+      Bad            = "firebrick"
+    ),
+    breaks = c("Carry (1-12)","Equal (1-12)")
+  ) +
+  labs(
+    title = "12-Month Average Carry vs. 1/N Equal-Weight: Cumulative Excess Return",
+    x     = "Date",
+    y     = "Cumulative Return"
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position      = "bottom",
+    panel.grid.major.x   = element_blank(),
+    panel.grid.minor.x   = element_blank()
+  )
+```
+
+### Effect of paper plot
+
+```{r}
+pub_date <- as.Date("2013-07-26")
+
+plot_pre_pub <- plot_1_12_df %>%
+  filter(Series == "Carry (1-12)", month <= pub_date)
+
+ggplot(plot_pre_pub, aes(x = month, y = Cumulative)) +
+  geom_line(color="steelblue", size=1) +
+  geom_vline(xintercept = pub_date,
+             color="gray40", linetype="dashed") +
+  annotate("text",
+           x     = pub_date,
+           y     = max(plot_pre_pub$Cumulative, na.rm=TRUE),
+           label = "Paper Published\n2013-07-26",
+           angle = 90, vjust = -0.2, hjust = 1.1,
+           size = 2.5, color = "gray40") +
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
+  labs(
+    title = "Carry (1-12): Cumulative Return — Pre-Publication",
+    x     = "Date",
+    y     = "Cumulative Return"
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position    = "none",
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor.x = element_blank()
+  )
+
+post_pub_carry <- portf_ret_1_12_rf %>%
+  filter(month > pub_date) %>%
+  select(month, carry1_12_portf) %>%
+  arrange(month) %>%
+  mutate(
+    gross_equity = cumprod(1 + carry1_12_portf)
+  ) %>%
+  mutate(Cumulative = gross_equity - 1) %>%
+  select(month, Cumulative)
+
+ggplot(post_pub_carry, aes(x = month, y = Cumulative)) +
+  geom_line(color="steelblue", size=1) +
+  geom_vline(xintercept = pub_date,
+             color="gray40", linetype="dashed") +
+  annotate("text",
+           x     = pub_date,
+           y     = max(post_pub_carry$Cumulative, na.rm=TRUE),
+           label = "Paper Published\n2013-07-26",
+           angle = 90, vjust = -0.2, hjust = 1.1,
+           size = 2.5, color = "gray40") +
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
+  labs(
+    title = "Carry (1-12): Cumulative Return — Post-Publication",
+    x     = "Date",
+    y     = "Cumulative Return"
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position      = "none",
+    panel.grid.major.x   = element_blank(),
+    panel.grid.minor.x   = element_blank()
+  )
+```
+
+
+### Turnover basic (not very good)
+
+```{r}
+carry_weights <- ranked_weights %>%
+  select(Name, month, w_it) %>%
+  rename(weight_month = month, w_carry = w_it)
+
+turn_carry <- carry_weights %>%
+  arrange(Name, weight_month) %>%
+  group_by(Name) %>%
+  mutate(
+    w_lag = lag(w_carry, default = 0)
+  ) %>%
+  ungroup() %>%
+  mutate(abs_diff = abs(w_carry - w_lag)) %>%
+  group_by(weight_month) %>%
+  summarise(
+    Turnover = sum(abs_diff, na.rm = TRUE),
+    .groups  = "drop"
+  ) %>%
+  mutate(
+    Strategy = "Carry-Weighted",
+    month    = weight_month
+  ) %>%
+  select(month, Strategy, Turnover)
+
+annual_turnover <- turn_carry %>%
+  mutate(year = year(month)) %>%
+  group_by(Strategy, year) %>%
+  summarise(
+    yearly_turnover = sum(Turnover, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+avg_annual_turnover <- annual_turnover %>%
+  group_by(Strategy) %>%
+  summarise(
+    AvgAnnualTurnover = mean(yearly_turnover, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+print(avg_annual_turnover)
+
+ggplot(avg_annual_turnover, aes(
+  x = reorder(Strategy, AvgAnnualTurnover), 
+  y = AvgAnnualTurnover, 
+  fill = Strategy
+)) +
+  geom_col(show.legend = FALSE) +
+  coord_flip() +
+  labs(
+    title = "Average Annual Turnover: Carry-Weighted Portfolio",
+    x     = "Strategy",
+    y     = "Average Annual Turnover"
+  ) +
+  theme_minimal()
+
+ggplot(annual_turnover, aes(x = year, y = yearly_turnover, color = Strategy)) +
+  geom_line(size = 1) +
+  geom_point(size = 1) +
+  labs(
+    title = "Yearly Turnover: Carry-Weighted Portfolio",
+    x     = "Calendar Year",
+    y     = "Annual Turnover"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+```
+
+## Long Only
+
+```{r}
+long_carry_wt <- master_panel %>%
+  group_by(month) %>%
+  mutate(w_raw = pmax(monthly_carry, 0)) %>%
+  mutate(
+    w_it = if (sum(w_raw, na.rm=TRUE)>0) w_raw/sum(w_raw, na.rm=TRUE)
+           else rep(1/n(), n())
+  ) %>%
+  ungroup() %>%
+  select(Name, month, w_it)
+
+rets_t1 <- master_panel %>%
+  select(Name, month, monthly_ret) %>%
+  rename(return_month = month, r_it1 = monthly_ret)
+
+portf_long_carry <- long_carry_wt %>%
+  mutate(return_month = month %m+% months(1)) %>%
+  left_join(rets_t1, by=c("Name","return_month")) %>%
+  filter(!is.na(r_it1)) %>%
+  group_by(return_month) %>%
+  summarise(
+    LongOnlyCarry = sum(w_it * r_it1),
+    .groups="drop"
+  )
+
+portf_simple_carry <- portf_ret %>%
+  transmute(
+    return_month,
+    SimpleCarry = carry_portf
+  )
+
+perf_lo_annual <- portf_long_carry %>%
+  left_join(portf_simple_carry, by="return_month") %>%
+  pivot_longer(
+    cols      = c(LongOnlyCarry, SimpleCarry),
+    names_to  = "Strategy",
+    values_to = "Return"
+  ) %>%
+  group_by(Strategy) %>%
+  summarise(
+    Mean     = 100 * mean(Return, na.rm=TRUE) * 12,
+    `St.Dev` = 100 * sd(Return,   na.rm=TRUE) * sqrt(12),
+    Skewness = skewness(Return, na.rm=TRUE),
+    Kurtosis = kurtosis(Return, na.rm=TRUE),
+    Sharpe   = (mean(Return, na.rm=TRUE)/sd(Return, na.rm=TRUE)) * sqrt(12),
+    .groups="drop"
+  )
+print(perf_lo_annual)
+```
+
+#### Pre and Post Long-Only
+
+```{r}
+split_date <- as_date("2013-07-26")
+
+long_carry_wt <- master_panel %>%
+  group_by(month) %>%
+  mutate(w_raw = pmax(monthly_carry, 0)) %>%
+  mutate(
+    w_it = if (sum(w_raw, na.rm = TRUE) > 0) {
+      w_raw / sum(w_raw, na.rm = TRUE)
+    } else {
+      rep(1 / n(), n())
+    }
+  ) %>%
+  ungroup() %>%
+  select(Name, month, w_it)
+
+rets_t1 <- master_panel %>%
+  select(Name, month, monthly_ret) %>%
+  rename(return_month = month, r_it1 = monthly_ret)
+
+portf_long_carry <- long_carry_wt %>%
+  mutate(return_month = month %m+% months(1)) %>%
+  left_join(rets_t1, by = c("Name", "return_month")) %>%
+  filter(!is.na(r_it1)) %>%
+  group_by(return_month) %>%
+  summarise(LongOnlyCarry = sum(w_it * r_it1, na.rm = TRUE), .groups = "drop")
+
+portf_simple_carry <- portf_ret %>%
+  transmute(return_month, SimpleCarry = carry_portf)
+
+combined <- portf_long_carry %>%
+  left_join(portf_simple_carry, by = "return_month") %>%
+  pivot_longer(
+    cols      = c(LongOnlyCarry, SimpleCarry),
+    names_to  = "Strategy",
+    values_to = "Return"
+  )
+
+compute_stats <- function(df, label) {
+  Mean_m   <- mean(df$Return, na.rm = TRUE)
+  Sd_m     <- sd(df$Return,   na.rm = TRUE)
+  Skew_m   <- skewness(df$Return, na.rm = TRUE)
+  Kurt_m   <- kurtosis(df$Return, na.rm = TRUE)
+  Sharpe_m <- mean(df$Return, na.rm = TRUE) / sd(df$Return, na.rm = TRUE)
+  
+  tibble(
+    Strategy = label,
+    Mean     = 100 * Mean_m * 12,
+    `St.Dev` = 100 * Sd_m   * sqrt(12),
+    Skewness = Skew_m,
+    Kurtosis = Kurt_m,
+    Sharpe   = Sharpe_m    * sqrt(12)
+  )
+}
+
+stats_full <- combined %>%
+  group_by(Strategy) %>%
+  do(compute_stats(., paste0(.$Strategy[1], " (Full)")))
+
+stats_pre <- combined %>%
+  filter(return_month < split_date) %>%
+  group_by(Strategy) %>%
+  do(compute_stats(., paste0(.$Strategy[1], " (Pre-Publication)")))
+
+stats_post <- combined %>%
+  filter(return_month >= split_date) %>%
+  group_by(Strategy) %>%
+  do(compute_stats(., paste0(.$Strategy[1], " (Post-Publication)")))
+
+perf_lo_split <- bind_rows(stats_full, stats_pre, stats_post) %>%
+  select(Strategy, Mean, `St.Dev`, Skewness, Kurtosis, Sharpe)
+
+print(perf_lo_split)
+```
+
+### Graph of Long-only
+
+```{r}
+carry_series <- portf_ret %>%
+  transmute(
+    month    = return_month,
+    carry    = carry_portf
+  )
+
+longonly_series <- portf_long_carry %>%
+  transmute(
+    month        = return_month,
+    `Long-Only`  = LongOnlyCarry
+  )
+
+plot_df <- full_join(carry_series, longonly_series, by="month") %>%
+  arrange(month) %>%
+  fill(carry, `Long-Only`, .direction="down") %>%
+  mutate(
+    cum_carry      = cumprod(1 + carry     ) - 1,
+    cum_long_only  = cumprod(1 + `Long-Only`) - 1
+  ) %>%
+  select(month, cum_carry, cum_long_only) %>%
+  pivot_longer(-month, names_to="Strategy", values_to="CumulativeReturn")
+
+ggplot(plot_df, aes(x=month, y=CumulativeReturn, color=Strategy)) +
+  geom_line(size=1) +
+  scale_y_continuous(labels = percent_format(1)) +
+  labs(
+    title = "Carry vs. Long-Only Carry",
+    x     = "Month",
+    y     = "Cumulative Return",
+    color = NULL
+  ) +
+  theme_minimal() +
+  theme(legend.position="bottom")
+```
+
+## Countries vs. Regions
+
+```{r}
+library(dplyr)
+library(lubridate)
+library(moments)
+
+limited_eq4 <- c("Japanese", "American", "EURO STOXX 50", "EM")
+
+rets_t1 <- master_panel %>%
+  select(Asset, Name, month, monthly_ret) %>%
+  rename(
+    return_month = month,
+    r_it1        = monthly_ret
+  )
+
+weights2_t <- ranked_weights %>%
+  filter(
+    Asset == "Commodity"
+    |
+    (Asset == "Equity" & Name %in% limited_eq4)
+  ) %>%
+  select(Asset, Name, month, w_it) %>%
+  rename(weight_month = month)
+
+portf2 <- weights2_t %>%
+  mutate(return_month = weight_month %m+% months(1)) %>%
+  left_join(rets_t1, by = c("Asset","Name","return_month")) %>%
+  filter(!is.na(r_it1))
+
+portf2_ret <- portf2 %>%
+  group_by(return_month) %>%
+  summarise(
+    carry_eq4cmd = sum(w_it * r_it1),
+    ew_eq4cmd    = mean(r_it1),
+    .groups = "drop"
+  ) %>%
+  arrange(return_month)
+
+orig_stats <- portf_ret_rf %>%
+  pivot_longer(c(carry_portf, eq_portf),
+               names_to  = "Strategy",
+               values_to = "Return") %>%
+  mutate(Excess = Return) %>%
+  group_by(Strategy) %>%
+  summarise(
+    Mean_m   = mean(Return,     na.rm=TRUE),
+    Sd_m     = sd(Return,       na.rm=TRUE),
+    Skew_m   = skewness(Return, na.rm=TRUE),
+    Kurt_m   = kurtosis(Return, na.rm=TRUE),
+    Sharpe_m = mean(Excess)/sd(Excess),
+    .groups  = "drop"
+  ) %>%
+  transmute(
+    Strategy,
+    Mean     = 100*Mean_m*12,
+    `St.Dev` = 100*Sd_m*sqrt(12),
+    Skewness = Skew_m,
+    Kurtosis = Kurt_m,
+    Sharpe   = Sharpe_m*sqrt(12)
+  )
+
+new_all_stats <- portf2_ret %>%
+  pivot_longer(c(carry_eq4cmd, ew_eq4cmd),
+               names_to  = "Strategy",
+               values_to = "Return") %>%
+  mutate(Excess = Return) %>%
+  group_by(Strategy) %>%
+  summarise(
+    Mean_m   = mean(Return,     na.rm=TRUE),
+    Sd_m     = sd(Return,       na.rm=TRUE),
+    Skew_m   = skewness(Return, na.rm=TRUE),
+    Kurt_m   = kurtosis(Return, na.rm=TRUE),
+    Sharpe_m = mean(Excess)/sd(Excess),
+    .groups  = "drop"
+  ) %>%
+  transmute(
+    Strategy = recode(Strategy,
+      carry_eq4cmd = "New Carry (EQ3+CMDTY)",
+      ew_eq4cmd    = "New   EW (EQ3+CMDTY)"
+    ),
+    Mean     = 100*Mean_m*12,
+    `St.Dev` = 100*Sd_m*sqrt(12),
+    Skewness = Skew_m,
+    Kurtosis = Kurt_m,
+    Sharpe   = Sharpe_m*sqrt(12)
+  )
+
+cmdty_stats <- portf2 %>%
+  filter(Asset=="Commodity") %>%
+  group_by(return_month) %>%
+  summarise(CommCarry = sum(w_it*r_it1), .groups="drop") %>%
+  mutate(Excess = CommCarry) %>%
+  summarise(
+    Strategy  = "Commodity Carry",
+    Mean_m    = mean(CommCarry, na.rm=TRUE),
+    Sd_m      = sd(CommCarry,   na.rm=TRUE),
+    Skew_m    = skewness(CommCarry, na.rm=TRUE),
+    Kurt_m    = kurtosis(CommCarry, na.rm=TRUE),
+    Sharpe_m  = mean(Excess)/sd(Excess)
+  ) %>%
+  transmute(
+    Strategy,
+    Mean     = 100*Mean_m*12,
+    `St.Dev` = 100*Sd_m*sqrt(12),
+    Skewness = Skew_m,
+    Kurtosis = Kurt_m,
+    Sharpe   = Sharpe_m*sqrt(12)
+  )
+
+eq_stats <- portf %>%                      
+  filter(Asset == "Equity") %>%
+  group_by(return_month) %>%
+  summarise(
+    EqCarry = sum(w_it * r_it1),
+    .groups = "drop"
+  ) %>%
+  arrange(return_month) %>%
+  mutate(Excess = EqCarry) %>%
+  summarise(
+    Strategy  = "Equity Carry (All)",
+    Mean_m    = mean(EqCarry,     na.rm = TRUE),
+    Sd_m      = sd(EqCarry,       na.rm = TRUE),
+    Skew_m    = skewness(EqCarry, na.rm = TRUE),
+    Kurt_m    = kurtosis(EqCarry, na.rm = TRUE),
+    Sharpe_m  = mean(Excess) / sd(Excess)
+  ) %>%
+  transmute(
+    Strategy,
+    Mean     = 100 * Mean_m   * 12,
+    `St.Dev` = 100 * Sd_m     * sqrt(12),
+    Skewness = Skew_m,
+    Kurtosis = Kurt_m,
+    Sharpe   = Sharpe_m * sqrt(12)
+  )
+eq4_stats <- portf2 %>%
+  filter(Asset=="Equity", Name %in% limited_eq4) %>%
+  group_by(return_month) %>%
+  summarise(Eq4Carry = sum(w_it*r_it1), .groups="drop") %>%
+  mutate(Excess = Eq4Carry) %>%
+  summarise(
+    Strategy  = "Equity Carry (EQ3)",
+    Mean_m    = mean(Eq4Carry, na.rm=TRUE),
+    Sd_m      = sd(Eq4Carry,   na.rm=TRUE),
+    Skew_m    = skewness(Eq4Carry, na.rm=TRUE),
+    Kurt_m    = kurtosis(Eq4Carry, na.rm=TRUE),
+    Sharpe_m  = mean(Excess)/sd(Excess)
+  ) %>%
+  transmute(
+    Strategy,
+    Mean     = 100*Mean_m*12,
+    `St.Dev` = 100*Sd_m*sqrt(12),
+    Skewness = Skew_m,
+    Kurtosis = Kurt_m,
+    Sharpe   = Sharpe_m*sqrt(12)
+  )
+
+long_stats <- master_panel %>%
+  group_by(month) %>%
+  mutate(
+    w_raw = pmax(monthly_carry, 0),
+    w_it  = if (sum(w_raw, na.rm=TRUE) > 0) {
+              w_raw / sum(w_raw, na.rm=TRUE)
+            } else {
+              rep(1 / n(), n())
+            }
+  ) %>%
+  ungroup() %>%
+  select(Name, month, w_it) %>%
+  mutate(return_month = month %m+% months(1)) %>%
+  left_join(rets_t1, by = c("Name","return_month")) %>%
+  filter(!is.na(r_it1)) %>%
+  group_by(return_month) %>%
+  mutate(w_it = w_it / sum(w_it, na.rm=TRUE)) %>%
+  summarise(
+    LongOnlyCarry = sum(w_it * r_it1),
+    .groups = "drop"
+  ) %>%
+  mutate(Excess = LongOnlyCarry) %>%
+  summarise(
+    Strategy = "Long-Only Carry (All)",
+    Mean_m   = mean(LongOnlyCarry, na.rm=TRUE),
+    Sd_m     = sd(LongOnlyCarry,   na.rm=TRUE),
+    Skew_m   = skewness(LongOnlyCarry, na.rm=TRUE),
+    Kurt_m   = kurtosis(LongOnlyCarry, na.rm=TRUE),
+    Sharpe_m = mean(Excess, na.rm=TRUE) / sd(Excess, na.rm=TRUE)
+  ) %>%
+  transmute(
+    Strategy,
+    Mean     = 100 * Mean_m   * 12,
+    `St.Dev` = 100 * Sd_m     * sqrt(12),
+    Skewness = Skew_m,
+    Kurtosis = Kurt_m,
+    Sharpe   = Sharpe_m * sqrt(12)
+  )
+long_eq3cmd_stats <- master_panel %>%
+  filter(
+    Asset == "Commodity" |
+    (Asset == "Equity" & Name %in% limited_eq4)
+  ) %>%
+  group_by(month) %>%
+  mutate(w_raw = pmax(monthly_carry, 0)) %>%
+  mutate(
+    w_it = if (sum(w_raw, na.rm=TRUE) > 0) {
+      w_raw / sum(w_raw, na.rm=TRUE)
+    } else {
+      rep(1/n(), n())
+    }
+  ) %>%
+  ungroup() %>%
+  select(Name, Asset, month, w_it) %>%
+  mutate(return_month = month %m+% months(1)) %>%
+  left_join(
+    rets_t1, 
+    by = c("Name","return_month")
+  ) %>%
+  filter(!is.na(r_it1)) %>%
+  group_by(return_month) %>%
+  summarise(
+    LongEq3CmdCarry = sum(w_it * r_it1),
+    .groups = "drop"
+  ) %>%
+  mutate(Excess = LongEq3CmdCarry) %>%
+  summarise(
+    Strategy  = "Long-Only Carry (EQ3 + CMDTY)",
+    Mean_m    = mean(LongEq3CmdCarry, na.rm = TRUE),
+    Sd_m      = sd(LongEq3CmdCarry,   na.rm = TRUE),
+    Skew_m    = skewness(LongEq3CmdCarry, na.rm = TRUE),
+    Kurt_m    = kurtosis(LongEq3CmdCarry, na.rm = TRUE),
+    Sharpe_m  = mean(Excess, na.rm = TRUE) / sd(Excess, na.rm = TRUE)
+  ) %>%
+  transmute(
+    Strategy,
+    Mean     = 100 * Mean_m   * 12,
+    `St.Dev` = 100 * Sd_m     * sqrt(12),
+    Skewness = Skew_m,
+    Kurtosis = Kurt_m,
+    Sharpe   = Sharpe_m * sqrt(12)
+  )
+final_stats <- bind_rows(
+  orig_stats,
+  new_all_stats,
+  cmdty_stats,
+  eq_stats,
+  eq4_stats,
+  long_stats,
+  long_eq3cmd_stats   
+)
+
+print(final_stats)
+```
+
+### Graph
+
+```{r}
+limited_eq4 <- c("Japanese", "American", "EURO STOXX 50", "EM")
+
+eq_full_df <- portf %>%
+  filter(Asset == "Equity") %>%
+  group_by(return_month) %>%
+  summarise(EqCarry = sum(w_it * r_it1, na.rm = TRUE), .groups = "drop") %>%
+  arrange(return_month) %>%
+  mutate(
+    CumReturn     = cumprod(1 + EqCarry) - 1,
+    Strategy      = "All Equities"
+  ) %>%
+  select(return_month, CumReturn, Strategy)
+
+eq4_df <- ranked_weights %>%
+  filter(Asset == "Equity", Name %in% limited_eq4) %>%
+  select(Name, Asset, month, w_it) %>%
+  rename(weight_month = month) %>%
+  mutate(return_month = weight_month %m+% months(1)) %>%
+  left_join(
+    master_panel %>%
+      select(Name, month, monthly_ret) %>%
+      rename(return_month = month, r_it1 = monthly_ret),
+    by = c("Name", "return_month")
+  ) %>%
+  filter(!is.na(r_it1)) %>%
+  group_by(return_month) %>%
+  summarise(Eq4Carry = sum(w_it * r_it1, na.rm = TRUE), .groups = "drop") %>%
+  arrange(return_month) %>%
+  mutate(
+    CumReturn = cumprod(1 + Eq4Carry) - 1,
+    Strategy  = "3 Regional Equities"
+  ) %>%
+  select(return_month, CumReturn, Strategy)
+
+combined_df <- bind_rows(eq_full_df, eq4_df)
+
+ggplot(combined_df, aes(x = return_month, y = CumReturn, color = Strategy)) +
+  geom_line(size = 1) +
+  scale_y_continuous(labels = percent_format(accuracy = 0.1)) +
+  labs(
+    title = "Cumulative Carry Returns: All Equities vs. 3 Regional Equities",
+    x     = "Date",
+    y     = "Cumulative Return",
+    color = "Portfolio"
+  ) +
+  theme_minimal()
+```
+
+## Portfolio Context
+
+### 3FF and 5FF
+
+```{r}
+
+# ——————————————————————————————————————————————————————————————
+# 1) Downloads & reads Fasma-French 3 factors
+# ——————————————————————————————————————————————————————————————
+#tmp3 <- tempfile(fileext = ".zip")
+#url3 <- "https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/ftp/F-F_Research_Data_Factors_CSV.zip"
+#download.file(url3, tmp3, mode="wb")
+
+ff3 <- read.csv("F-F_Research_Data_Factors.CSV", 
+  skip = 3, 
+  nrows = 9999,
+  stringsAsFactors = FALSE
+)
+names(ff3)[1:5] <- c("yyyymm","Mkt_RF","SMB","HML","RF")
+ff3 <- ff3 %>% filter(yyyymm != "")
+ff3 <- ff3 %>%
+  mutate(
+    month = as.Date(as.yearmon(yyyymm, "%Y%m")),
+    across(c(Mkt_RF,SMB,HML,RF), ~ as.numeric(.x)/100)
+  ) %>%
+  select(month, Mkt_RF, SMB, HML, RF)
+
+tmpMom <- tempfile(fileext = ".zip")
+urlMom <- "https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/ftp/F-F_Momentum_Factor_CSV.zip"
+download.file(urlMom, tmpMom, mode="wb")
+
+# get the CSV name inside that zip (it’s usually something like "F-F_Momentum_Factor.CSV")
+inner <- unzip(tmpMom, list = TRUE)$Name[1]
+
+mom <- read.csv(
+  unz(tmpMom, inner),
+  skip             = 13,
+  nrows            = 9999,
+  stringsAsFactors = FALSE
+)
+file.remove(tmpMom)
+
+names(mom)[1:2] <- c("yyyymm", "MOM")
+mom <- mom %>%
+  filter(yyyymm != "") %>%
+  mutate(
+    month = as.Date(as.yearmon(yyyymm, "%Y%m")),
+    MOM   = as.numeric(MOM) / 100
+  ) %>%
+  select(month, MOM)
+ff_all <- ff3 %>%
+  left_join(mom, by = "month") %>%
+  filter(month >= as.Date("1989-01-01")) %>%   # drop anything before Jan-1989
+  mutate(
+    Mkt = Mkt_RF,               
+    FF3 = Mkt_RF + SMB + HML    # long-only sum of the three exposures
+  ) %>%
+  select(month, FF3, MOM)
+
+ff_strats <- ff_all %>%
+  pivot_longer(-month, names_to="Strategy", values_to="Return")
+
+all_strats <- bind_rows(
+  portf_ret_rf %>% 
+    # rename return_month → month so it lines up with ff_all
+    rename(month = return_month) %>%  
+    select(month, carry_portf, eq_portf) %>%
+    pivot_longer(
+      cols      = c(carry_portf, eq_portf),
+      names_to  = "Strategy",
+      values_to = "Return"
+    ),
+  ff_strats
+)
+
+perf_monthly <- all_strats %>%
+  mutate(Excess = Return) %>%
+  group_by(Strategy) %>%
+  summarise(
+    Mean_m   = mean(Return,     na.rm=TRUE),
+    Sd_m     = sd(Return,       na.rm=TRUE),
+    Skew_m   = skewness(Return, na.rm=TRUE),
+    Kurt_m   = kurtosis(Return, na.rm=TRUE),
+    Sharpe_m = mean(Excess, na.rm=TRUE)/sd(Excess, na.rm=TRUE),
+    .groups = "drop"
+  )
+
+perf_annual <- perf_monthly %>%
+  transmute(
+    Strategy,
+    Mean     = 100 * Mean_m   * 12,
+    `St.Dev` = 100 * Sd_m     * sqrt(12),
+    Skewness = Skew_m,
+    Kurtosis = Kurt_m,
+    Sharpe   = Sharpe_m * sqrt(12)
+  )
+
+print(perf_annual)
+```
+
+### Joint Strat Table
+
+```{r}
+all_stats <- bind_rows(
+  new_all_stats,
+  cmdty_stats,
+  eq_stats,
+  eq4_stats,
+  expo_stats,
+  perf_annual
+)
+
+print(all_stats)
+```
+
+### Practical Implementation (no trading costs)
+
+```{r}
+returns_wide <- all_strats %>%
+  pivot_wider(names_from = Strategy, values_from = Return) %>%
+  arrange(month) %>%
+  select(-month)       # drop the date col for correlation
+
+corr_mat <- cor(returns_wide, use = "pairwise.complete.obs")
+
+corrplot(corr_mat, method = "shade", tl.col="black", tl.srt=45,
+         addCoef.col="white", number.cex=0.7)
+
+dist_mat <- as.dist(1 - corr_mat)
+hc       <- hclust(dist_mat, method = "average")  
+
+plot(hc, main = "Hierarchical Clustering of Strategies\n(distance = 1 - corr)",
+     xlab = "", sub = "", cex = 0.8)
+```
+
+### Carry and MOM
+
+```{r}
+carry_df <- portf_ret_rf %>% 
+  rename(month = return_month) %>% 
+  select(month, carry_portf)
+
+carry_mom_df <- carry_df %>% 
+  inner_join(mom, by="month") %>% 
+  # simple 50/50 mix:
+  mutate(
+    Carry_MOM = 0.5 * carry_portf + 0.5 * MOM
+  ) %>% 
+  select(month, Carry_MOM)
+
+# a) existing strategies:
+orig_strats <- bind_rows(
+  portf_ret_rf %>% 
+    rename(month = return_month) %>% 
+    pivot_longer(c(carry_portf, eq_portf),
+                 names_to  = "Strategy",
+                 values_to = "Return")
+)
+
+# b) the FF3 & MOM:
+ff_strats <- ff_all %>% 
+  pivot_longer(-month, names_to="Strategy", values_to="Return")
+
+# c) brand-new Carry+MOM
+carry_mom_strat <- carry_mom_df %>%
+  rename(Return = Carry_MOM) %>%
+  mutate(Strategy = "Carry + MOM")  
+
+# d) all three blocks together:
+all_strats2 <- bind_rows(
+  orig_strats,
+  ff_strats,
+  carry_mom_strat
+)
+
+perf_monthly2 <- all_strats2 %>%
+  mutate(Excess = Return) %>%
+  group_by(Strategy) %>%
+  summarise(
+    Mean_m   = mean(Return,     na.rm=TRUE),
+    Sd_m     = sd(Return,       na.rm=TRUE),
+    Skew_m   = skewness(Return, na.rm=TRUE),
+    Kurt_m   = kurtosis(Return, na.rm=TRUE),
+    Sharpe_m = mean(Excess, na.rm=TRUE)/sd(Excess, na.rm=TRUE),
+    .groups = "drop"
+  )
+
+perf_annual2 <- perf_monthly2 %>%
+  transmute(
+    Strategy,
+    Mean     = 100 * Mean_m   * 12,
+    `St.Dev` = 100 * Sd_m     * sqrt(12),
+    Skewness = Skew_m,
+    Kurtosis = Kurt_m,
+    Sharpe   = Sharpe_m * sqrt(12)
+  )
+
+print(perf_annual2)
+```
+
+#### Long only carry and MOM
+
+```{r}
+rets_t1 <- master_panel %>%
+  select(Name, month, monthly_ret) %>%
+  rename(r_it1 = monthly_ret)
+
+longonly_carry <- master_panel %>%
+  group_by(Name, month) %>%
+  mutate(w_raw = pmax(monthly_carry, 0)) %>%
+  ungroup() %>%
+  group_by(month) %>%
+  mutate(
+    w_it = if (sum(w_raw, na.rm=TRUE) > 0) {
+             w_raw / sum(w_raw, na.rm=TRUE)
+           } else {
+             rep(1 / n(), n())
+           }
+  ) %>%
+  ungroup() %>%
+  mutate(return_month = month %m+% months(1)) %>%
+  left_join(
+    rets_t1,
+    by = c("Name", "return_month" = "month")
+  ) %>%
+  filter(!is.na(r_it1)) %>%
+  group_by(return_month) %>%
+  mutate(w_it = w_it / sum(w_it, na.rm=TRUE)) %>%
+  summarise(
+    LongOnlyCarry = sum(w_it * r_it1),
+    .groups = "drop"
+  ) %>%
+  rename(month = return_month) %>%
+  transmute(
+    month,
+    Strategy = "Long-Only Carry",
+    Return   = LongOnlyCarry
+  )
+
+tmpMom <- tempfile(fileext = ".zip")
+download.file(
+  "https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/ftp/F-F_Momentum_Factor_CSV.zip",
+  tmpMom, mode="wb"
+)
+inner  <- unzip(tmpMom, list=TRUE)$Name[1]
+mom_ff <- read.csv(unz(tmpMom, inner), skip=13, nrows=9999, stringsAsFactors=FALSE)
+file.remove(tmpMom)
+
+names(mom_ff)[1:2] <- c("yyyymm","MOM")
+mom_ff <- mom_ff %>%
+  filter(yyyymm!="") %>%
+  mutate(
+    month = as.Date(as.yearmon(yyyymm, "%Y%m")),
+    MOM   = as.numeric(MOM)/100
+  ) %>%
+  select(month, MOM) %>%
+  filter(month >= as.Date("1989-01-01"))
+
+raw_mom <- mom_ff %>%
+  transmute(
+    month,
+    Strategy = "Raw MOM (FF)",
+    Return   = MOM
+  )
+
+combo <- longonly_carry %>%
+  rename(CarryRet = Return) %>%
+  inner_join(mom_ff, by="month") %>%
+  transmute(
+    month,
+    Strategy = "Carry + MOM (50/50)",
+    Return   = 0.5 * CarryRet + 0.5 * MOM
+  )
+
+all_strats <- bind_rows(
+  longonly_carry,
+  raw_mom,
+  combo
+)
+
+perf_monthly <- all_strats %>%
+  group_by(Strategy) %>%
+  summarise(
+    Mean_m   = mean(Return,    na.rm=TRUE),
+    Sd_m     = sd(Return,      na.rm=TRUE),
+    Skew_m   = skewness(Return,na.rm=TRUE),
+    Kurt_m   = kurtosis(Return,na.rm=TRUE),
+    Sharpe_m = Mean_m / Sd_m,
+    .groups  = "drop"
+  )
+
+perf_annual <- perf_monthly %>%
+  transmute(
+    Strategy,
+    Mean     = 100 * Mean_m   * 12,
+    `St.Dev` = 100 * Sd_m     * sqrt(12),
+    Skewness = Skew_m,
+    Kurtosis = Kurt_m,
+    Sharpe   = Sharpe_m * sqrt(12)
+  )
+
+print(perf_annual)
+```
+
+#### Risk-parity weights
+
+```{r}
+
+combo_wide <- longonly_carry %>% 
+  rename(CarryRet = Return) %>% 
+  inner_join(mom_ff, by="month") %>% 
+  arrange(month)
+
+combo_wide <- combo_wide %>% 
+  mutate(
+    sigma_carry = rollapplyr(CarryRet, 12, sd, fill = NA),
+    sigma_mom   = rollapplyr(MOM,       12, sd, fill = NA)
+  ) %>% 
+  filter(!is.na(sigma_carry))  # drops the first 11 obs
+
+combo_rp <- combo_wide %>%
+  mutate(
+    w_carry = sigma_mom / (sigma_carry + sigma_mom),
+    w_mom   = sigma_carry / (sigma_carry + sigma_mom),
+    Strategy = "Carry + MOM (RP 12m)",
+    Return   = w_carry * CarryRet + w_mom * MOM
+  ) %>%
+  select(month, Strategy, Return)
+
+all_strats2 <- bind_rows(all_strats, combo_rp)
+
+perf_monthly2 <- all_strats2 %>%
+  group_by(Strategy) %>%
+  summarise(
+    Mean_m   = mean(Return,    na.rm=TRUE),
+    Sd_m     = sd(Return,      na.rm=TRUE),
+    Skew_m   = skewness(Return,na.rm=TRUE),
+    Kurt_m   = kurtosis(Return,na.rm=TRUE),
+    Sharpe_m = Mean_m / Sd_m,
+    .groups  = "drop"
+  )
+
+perf_annual2 <- perf_monthly2 %>%
+  transmute(
+    Strategy,
+    Mean     = 100 * Mean_m   * 12,
+    `St.Dev` = 100 * Sd_m     * sqrt(12),
+    Skewness = Skew_m,
+    Kurtosis = Kurt_m,
+    Sharpe   = Sharpe_m * sqrt(12)
+  )
+
+print(perf_annual2)
+```
+
+#### Interesting metrics
+
+```{r}
+all_strats <- bind_rows(
+  # Carry‐only
+  portf_ret_rf %>%
+    rename(month=return_month, Return=carry_portf) %>%
+    mutate(Strategy="Long-Short Carry"),
+  # Equal‐weight carry
+  portf_ret_rf %>%
+    rename(month=return_month, Return=eq_portf) %>%
+    mutate(Strategy="Equal-Weight Carry"),
+  # raw MOM
+  raw_mom,
+  # long‐only carry
+  longonly_carry,
+  # 50/50 blend
+  combo,
+  # risk‐parity blend
+  combo_rp
+)
+
+eq_curves <- all_strats %>%
+  arrange(Strategy, month) %>%
+  group_by(Strategy) %>%
+  mutate(Equity = cumprod(1 + Return)) %>%
+  ungroup()
+
+metrics_tbl <- eq_curves %>%
+  group_by(Strategy) %>%
+  summarise(
+    # final value of $1
+    EndEq    = last(Equity),
+    # number of months
+    n_months = n(),
+    # CAGR = (EndEq)^(12/nh) - 1
+    CAGR     = EndEq^(12/n_months) - 1,
+    # maximum drawdown
+    MaxDD    = max((cummax(Equity) - Equity)/cummax(Equity)),
+    # Calmar ratio
+    Calmar   = CAGR/MaxDD,
+    .groups  = "drop"
+  ) %>%
+  select(Strategy, EndEq, CAGR, MaxDD, Calmar)
+
+print(metrics_tbl)
+
+ggplot(eq_curves, aes(x=month, y=Equity, color=Strategy)) +
+  geom_line() +
+  scale_y_continuous(trans="log10") +
+  labs(
+    title = "Growth of $1 Invested — Six Strategies",
+    x     = "Month",
+    y     = "Equity (log scale)"
+  ) +
+  theme_minimal() +
+  theme(legend.position="bottom")
+```
+
+##### graph pre post
+
+```{r}
+split_date <- as_date("2013-07-26")
+
+all_strats <- bind_rows(
+  portf_ret_rf %>%
+    rename(month = return_month, Return = carry_portf) %>%
+    mutate(Strategy = "Long-Short Carry"),
+  portf_ret_rf %>%
+    rename(month = return_month, Return = eq_portf) %>%
+    mutate(Strategy = "Equal-Weight Carry"),
+  raw_mom,
+  longonly_carry,
+  combo,
+  combo_rp
+)
+
+eq_pre <- all_strats %>%
+  filter(month <= split_date) %>%
+  arrange(Strategy, month) %>%
+  group_by(Strategy) %>%
+  mutate(Equity = cumprod(1 + Return)) %>%
+  ungroup()
+
+eq_post <- all_strats %>%
+  filter(month > split_date) %>%
+  arrange(Strategy, month) %>%
+  group_by(Strategy) %>%
+  mutate(Equity = cumprod(1 + Return)) %>%
+  ungroup()
+
+ggplot(eq_pre, aes(x = month, y = Equity, color = Strategy)) +
+  geom_line() +
+  scale_y_continuous(trans = "log10") +
+  labs(
+    title = "Growth of $1 Invested — Six Strategies (Pre-Publication)",
+    x     = "Month",
+    y     = "Equity (log scale)"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+
+ggplot(eq_post, aes(x = month, y = Equity, color = Strategy)) +
+  geom_line() +
+  scale_y_continuous(trans = "log10") +
+  labs(
+    title = "Growth of $1 Invested — Six Strategies (Post-Publication)",
+    x     = "Month",
+    y     = "Equity (log scale)"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+```
+
+#### vol timing
+
+```{r}
+# -----------------------------------------------------------------------------
+# VOL‐TIMING ON THE “Carry + MOM (RP 12m)” SERIES
+# -----------------------------------------------------------------------------
+
+# a) target vol parameters
+target_ann_vol     <- 0.12
+target_monthly_vol <- target_ann_vol / sqrt(12)
+
+vol_timed_rp <- combo_rp %>%
+  arrange(month) %>%
+  mutate(
+    sigma_combo  = zoo::rollapplyr(Return, 12, sd, fill = NA),
+    VolTimedRet  = Return / sigma_combo * target_monthly_vol
+  ) %>%
+  filter(!is.na(VolTimedRet)) %>%
+  transmute(
+    month    = month,
+    Strategy = "Vol‐Timed Carry + MOM (RP 12m)",
+    Return   = VolTimedRet
+  )
+
+all_strats3 <- bind_rows(
+  all_strats2,   
+  vol_timed_rp
+)
+
+perf_monthly3 <- all_strats3 %>%
+  group_by(Strategy) %>%
+  summarise(
+    Mean_m   = mean(Return,    na.rm = TRUE),
+    Sd_m     = sd(Return,      na.rm = TRUE),
+    Skew_m   = skewness(Return,na.rm = TRUE),
+    Kurt_m   = kurtosis(Return,na.rm = TRUE),
+    Sharpe_m = Mean_m / Sd_m,
+    .groups  = "drop"
+  )
+
+perf_annual3 <- perf_monthly3 %>%
+  transmute(
+    Strategy,
+    Mean     = 100 * Mean_m   * 12,
+    `St.Dev` = 100 * Sd_m     * sqrt(12),
+    Skewness = Skew_m,
+    Kurtosis = Kurt_m,
+    Sharpe   = Sharpe_m * sqrt(12)
+  )
+
+print(perf_annual3)
+
+vol_timed_eq <- vol_timed_rp %>%
+  arrange(month) %>%
+  mutate(Equity = cumprod(1 + Return))
+
+ggplot(vol_timed_eq, aes(x = month, y = Equity)) +
+  geom_line(color = "steelblue", size = 1) +
+  scale_y_continuous(trans = "log10") +
+  labs(
+    title = "Vol-Timed Equity: Carry + MOM (RP 12m)",
+    x     = "Month",
+    y     = "Equity (log scale)"
+  ) +
+  theme_minimal()
+```
+
+####turnover
+
+```{r}
+rets_t1 <- master_panel %>%
+  select(Name, month, monthly_ret) %>%
+  rename(return_month = month, r_it1 = monthly_ret)
+
+tmpMom <- tempfile(fileext = ".zip")
+download.file(
+  "https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/ftp/F-F_Momentum_Factor_CSV.zip",
+  tmpMom, mode = "wb"
+)
+inner <- unzip(tmpMom, list = TRUE)$Name[1]
+mom_ff <- read.csv(unz(tmpMom, inner), skip = 13, nrows = 9999, stringsAsFactors = FALSE)
+file.remove(tmpMom)
+
+names(mom_ff)[1:2] <- c("yyyymm", "MOM")
+mom_ff <- mom_ff %>%
+  filter(yyyymm != "") %>%
+  mutate(
+    month = as.Date(as.yearmon(yyyymm, "%Y%m")),
+    MOM   = as.numeric(MOM) / 100
+  ) %>%
+  select(month, MOM) %>%
+  filter(month >= as.Date("1989-01-01"))
+
+# ------------------------------------------------------------------------------
+# 1) LONG‐ONLY CARRY: weights by Name & month, then returns
+# ------------------------------------------------------------------------------
+longonly_weights <- master_panel %>%
+  group_by(Name, month) %>%
+  mutate(w_raw = pmax(monthly_carry, 0)) %>%
+  ungroup() %>%
+  group_by(month) %>%
+  mutate(
+    w_it = if (sum(w_raw, na.rm = TRUE) > 0) {
+      w_raw / sum(w_raw, na.rm = TRUE)
+    } else {
+      rep(1 / n(), n())
+    }
+  ) %>%
+  ungroup() %>%
+  select(Name, month, w_it)
+
+longonly_carry <- longonly_weights %>%
+  mutate(return_month = month %m+% months(1)) %>%
+  left_join(rets_t1, by = c("Name", "return_month")) %>%
+  filter(!is.na(r_it1)) %>%
+  group_by(return_month) %>%
+  mutate(w_it = w_it / sum(w_it, na.rm = TRUE)) %>%
+  summarise(CarryRet = sum(w_it * r_it1), .groups = "drop") %>%
+  rename(month = return_month)
+
+longonly_carry_strat <- longonly_carry %>%
+  transmute(
+    month,
+    Strategy = "Long-Only Carry",
+    Return   = CarryRet
+  )
+
+# ------------------------------------------------------------------------------
+# 2) RAW MOM (FF) STRATEGY
+# ------------------------------------------------------------------------------
+raw_mom <- mom_ff %>%
+  transmute(
+    month,
+    Strategy = "Raw MOM (FF)",
+    Return   = MOM
+  )
+
+# ------------------------------------------------------------------------------
+# 3) CARRY + MOM (50/50) STRATEGY (static weights)
+# ------------------------------------------------------------------------------
+combo_5050 <- longonly_carry %>%
+  rename(CarryRet = CarryRet) %>%
+  inner_join(mom_ff, by = "month") %>%
+  transmute(
+    month,
+    Strategy = "Carry + MOM (50/50)",
+    Return   = 0.5 * CarryRet + 0.5 * MOM
+  )
+
+# ------------------------------------------------------------------------------
+# 4) COMBO_WIDE FOR RISK‐PARITY WEIGHTS
+# ------------------------------------------------------------------------------
+combo_wide <- longonly_carry %>%
+  rename(CarryRet = CarryRet) %>%
+  inner_join(mom_ff, by = "month") %>%
+  arrange(month) %>%
+  mutate(
+    sigma_carry = rollapplyr(CarryRet, 12, sd, fill = NA),
+    sigma_mom   = rollapplyr(MOM,      12, sd, fill = NA)
+  ) %>%
+  filter(!is.na(sigma_carry))
+
+# ------------------------------------------------------------------------------
+# 5) CARRY + MOM (RP 12m) STRATEGY (dynamic risk‐parity weights)
+# ------------------------------------------------------------------------------
+combo_rp <- combo_wide %>%
+  mutate(
+    w_carry  = sigma_mom / (sigma_carry + sigma_mom),
+    w_mom    = sigma_carry / (sigma_carry + sigma_mom),
+    Strategy = "Carry + MOM (RP 12m)",
+    Return   = w_carry * CarryRet + w_mom * MOM
+  ) %>%
+  select(month, Strategy, w_carry, w_mom, Return)
+
+# ------------------------------------------------------------------------------
+# 6) VOL‐TIMED Carry + MOM (RP 12m) STRATEGY
+# ------------------------------------------------------------------------------
+target_ann_vol     <- 0.12
+target_monthly_vol <- target_ann_vol / sqrt(12)
+
+vol_timed_rp <- combo_rp %>%
+  arrange(month) %>%
+  mutate(
+    sigma_combo = rollapplyr(Return, 12, sd, fill = NA),
+    scale_fac   = target_monthly_vol / sigma_combo,
+    Return      = Return * scale_fac
+  ) %>%
+  filter(!is.na(scale_fac)) %>%
+  transmute(
+    month,
+    Strategy  = "Vol-Timed Carry + MOM (RP 12m)",
+    scale_fac,
+    Return
+  )
+
+# ------------------------------------------------------------------------------
+# 7) STRATEGY RETURNS INTO ONE TABLE (for completeness)
+# ------------------------------------------------------------------------------
+all_strats <- bind_rows(
+  longonly_carry_strat,
+  raw_mom,
+  combo_5050,
+  combo_rp %>% select(month, Strategy, Return),
+  vol_timed_rp  %>% select(month, Strategy, Return)
+)
+
+# ------------------------------------------------------------------------------
+# 8) MONTHLY TURNOVER FOR EACH STRATEGY
+# ------------------------------------------------------------------------------
+turn_longcarry <- longonly_weights %>%
+  arrange(Name, month) %>%
+  group_by(Name) %>%
+  mutate(w_lag = lag(w_it)) %>%
+  ungroup() %>%
+  replace_na(list(w_lag = 0)) %>%
+  mutate(abs_diff = abs(w_it - w_lag)) %>%
+  group_by(month) %>%
+  summarise(Turnover = sum(abs_diff), .groups = "drop") %>%
+  mutate(Strategy = "Long-Only Carry") %>%
+  select(month, Strategy, Turnover)
+
+turn_rawmom <- raw_mom %>%
+  transmute(
+    month,
+    Strategy = "Raw MOM (FF)",
+    Turnover = 0
+  )
+
+turn_5050 <- combo_5050 %>%
+  transmute(
+    month,
+    Strategy = "Carry + MOM (50/50)",
+    Turnover = 0
+  )
+
+turn_rp <- combo_rp %>%
+  arrange(month) %>%
+  mutate(
+    w_carry_lag = lag(w_carry, default = 0),
+    w_mom_lag   = lag(w_mom,   default = 0),
+    Turnover    = abs(w_carry - w_carry_lag) + abs(w_mom - w_mom_lag)
+  ) %>%
+  transmute(
+    month,
+    Strategy = "Carry + MOM (RP 12m)",
+    Turnover
+  ) %>%
+  filter(!is.na(Turnover))
+
+turn_voltimed <- vol_timed_rp %>%
+  arrange(month) %>%
+  mutate(
+    scale_lag = lag(scale_fac, default = 0),
+    Turnover  = abs(scale_fac - scale_lag)
+  ) %>%
+  transmute(
+    month,
+    Strategy = "Vol-Timed Carry + MOM (RP 12m)",
+    Turnover
+  ) %>%
+  filter(!is.na(Turnover))
+
+turnover_table <- bind_rows(
+  turn_longcarry,
+  turn_rawmom,
+  turn_5050,
+  turn_rp,
+  turn_voltimed
+) %>%
+  arrange(Strategy, month)
+
+annual_turnover <- turnover_table %>%
+  mutate(year = year(month)) %>%
+  group_by(Strategy, year) %>%
+  summarise(
+    yearly_turnover = sum(Turnover, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+avg_annual_turnover <- annual_turnover %>%
+  group_by(Strategy) %>%
+  summarise(
+    AvgAnnualTurnover = mean(yearly_turnover, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+print(avg_annual_turnover)
+
+ggplot(avg_annual_turnover, aes(
+  x = reorder(Strategy, AvgAnnualTurnover),
+  y = AvgAnnualTurnover,
+  fill = Strategy
+)) +
+  geom_col(show.legend = FALSE) +
+  coord_flip() +
+  labs(
+    title = "Average Annual Turnover by Strategy",
+    x     = "Strategy",
+    y     = "Average Annual Turnover"
+  ) +
+  theme_minimal()
+
+ggplot(annual_turnover, aes(x = year, y = yearly_turnover, color = Strategy)) +
+  geom_line(size = 1) +
+  geom_point(size = 1) +
+  labs(
+    title = "Yearly Turnover by Strategy",
+    x     = "Calendar Year",
+    y     = "Annual Turnover"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+```
+
+#### Trading costs
+
+```{r}
+half_spread_by_month <- final_data %>%
+  filter(PX_LAST > 0) %>%
+  mutate(half_spread = abs(PX_ASK - PX_BID) / PX_LAST / 2) %>%
+  filter(is.finite(half_spread)) %>%
+  transmute(return_month = floor_date(Date, "month"), half_spread) %>%
+  group_by(return_month) %>%
+  summarize(avg_half_spread = mean(half_spread, na.rm=TRUE), .groups="drop") %>%
+  complete(return_month = seq(min(return_month),
+                              max(return_month),
+                              by="month")) %>%
+  arrange(return_month) %>%
+  mutate(
+    avg_half_spread = na.approx(avg_half_spread, x=return_month, na.rm=FALSE),
+    avg_half_spread = na.locf(avg_half_spread, na.rm=FALSE),
+    avg_half_spread = na.locf(avg_half_spread, fromLast=TRUE),
+    avg_half_spread = pmax(avg_half_spread, 0)
+  )
+
+all_costed <- all_strats %>%
+  rename(return_month = month, gross = Return) %>%
+  left_join(half_spread_by_month, by="return_month") %>%
+  arrange(return_month) %>%
+  mutate(
+    cost = coalesce(avg_half_spread, lag(avg_half_spread), 0),
+    net  = gross - cost
+  ) %>%
+  select(return_month, Strategy, gross, cost, net)
+
+perf_table <- all_costed %>%
+  group_by(Strategy) %>%
+  summarize(
+    r = list(xts::xts(net, order.by=return_month)),
+    .groups="drop"
+  ) %>%
+  rowwise() %>%
+  mutate(
+    EndEq  = as.numeric(last(cumprod(1 + r[[1]]))),
+    CAGR   = as.numeric(Return.annualized(r[[1]], scale=12)),
+    MaxDD  = as.numeric(maxDrawdown(r[[1]])),
+    Calmar = CAGR / MaxDD
+  ) %>%
+  select(Strategy, EndEq, CAGR, MaxDD, Calmar) %>%
+  arrange(desc(Calmar))
+
+print(perf_table)
+
+example_eq <- all_costed %>%
+  filter(Strategy == "Carry + MOM (50/50)") %>%
+  group_by(Strategy) %>%
+  arrange(return_month) %>%
+  mutate(
+    gross_eq = cumprod(1 + gross),
+    net_eq   = cumprod(1 + net)
+  ) %>%
+  pivot_longer(c(gross_eq, net_eq),
+               names_to="Series", values_to="Equity")
+
+ggplot(example_eq, aes(return_month, Equity, color=Series)) +
+  geom_line(size=1) +
+  labs(
+    title="Carry + MOM (50/50): Gross vs Net (with half-spread cost)",
+    x="Month", y="Equity (cumulative)"
+  ) +
+  theme_minimal()
+```
+
+### Carry and FF3
+
+```{r}
+combo <- portf_ret_rf %>%
+  select(return_month, carry_portf) %>%
+  rename(month = return_month) %>%
+  left_join(
+    ff_all %>% select(month, FF3),
+    by = "month"
+  ) %>%
+  filter(!is.na(carry_portf), !is.na(FF3))
+
+cor_cf <- cor(combo$carry_portf, combo$FF3, use = "pairwise.complete.obs")
+cat("corr(carry_portf, FF3) =", round(cor_cf, 3), "\n")
+
+corr_mat <- cor(combo %>% select(carry_portf, FF3), use = "pairwise.complete.obs")
+dist_mat <- as.dist(1 - corr_mat)            # distance = 1 - corr
+hc       <- hclust(dist_mat, method = "average")
+hc_dend   <- as.dendrogram(hc)
+
+plot(
+  hc_dend,
+  main = "Hierarchical clustering of carry_portf & FF3",
+  ylab = "1 - corr",
+  sub  = ""
+)
+
+combo_long <- combo %>% 
+  pivot_longer(-month, names_to="Strategy", values_to="Return")
+
+ggplot(combo_long, aes(month, Return, color=Strategy)) +
+  geom_line() +
+  scale_x_date(date_breaks="5 years", date_labels="%Y") +
+  theme_minimal() +
+  labs(title="carry_portf vs. FF3", x="Year", y="Monthly return")
+```
+
+### Combining them
+
+```{r}
+combo <- portf_ret_rf %>%
+  rename(month = return_month) %>%
+  select(month, carry = carry_portf) %>%
+  inner_join(ff_all %>% select(month, FF3), by = "month") %>%
+  arrange(month)
+
+R      <- combo %>% select(carry, FF3) %>% as.matrix()
+mu     <- colMeans(R, na.rm = TRUE)
+Sigma  <- cov(R, use = "complete.obs")
+mu_ann <- mu * 12
+sd_ann <- sqrt(diag(Sigma) * 12)
+
+# ------------------------------------------------------------------------------
+# 1) BASELINE 2-ASSET PORTFOLIOS
+# ------------------------------------------------------------------------------
+w_eq <- c(0.5, 0.5)
+
+inv_sigma <- 1 / sd_ann
+w_rp <- inv_sigma / sum(inv_sigma)
+
+w_mv_raw <- solve(Sigma, mu)
+w_mv     <- w_mv_raw / sum(w_mv_raw)
+
+wts <- tibble(
+  Strategy = c("Equal-Weight", "Risk-Parity", "MaxSharpe"),
+  w_carry  = c(w_eq[1], w_rp[1], w_mv[1]),
+  w_FF3    = c(w_eq[2], w_rp[2], w_mv[2])
+)
+
+# ------------------------------------------------------------------------------
+# 2) BLENDS + STANDALONES
+# ------------------------------------------------------------------------------
+blends <- wts %>%
+  rowwise() %>%
+  do({
+    wc <- .$w_carry; w3 <- .$w_FF3
+    tibble(month = combo$month, Strategy = .$Strategy,
+           Ret = wc * combo$carry + w3 * combo$FF3)
+  }) %>% ungroup()
+
+plot_df <- bind_rows(
+  blends,
+  combo %>% transmute(month, Strategy = "Carry-only", Ret = carry),
+  combo %>% transmute(month, Strategy = "FF3-only",   Ret = FF3)
+)
+
+# ---- (a) STATS TABLE NOW INCLUDES FF3-ONLY (and Carry-only) ----
+perf <- plot_df %>%
+  group_by(Strategy) %>%
+  summarise(
+    Mean    = 100 * mean(Ret, na.rm = TRUE) * 12,
+    `St.Dev`= 100 * sd(Ret,   na.rm = TRUE) * sqrt(12),
+    Skew    = skewness(Ret,   na.rm = TRUE),
+    Kurt    = kurtosis(Ret,   na.rm = TRUE),
+    Sharpe  = mean(Ret, na.rm = TRUE) / sd(Ret, na.rm = TRUE) * sqrt(12),
+    .groups = "drop"
+  )
+
+print(perf)
+
+# ---- (b) PLOT & DRAWDOWNS ----
+ggplot(plot_df, aes(month, Ret, color = Strategy)) +
+  geom_line() +
+  scale_x_date(date_breaks = "5 years", date_labels = "%Y") +
+  labs(title = "Blended vs. Standalone Returns",
+       x = "Year", y = "Monthly Return") +
+  theme_minimal(base_size = 14)
+
+drawdowns <- plot_df %>%
+  group_by(Strategy) %>%
+  arrange(month) %>%
+  mutate(cum = cumprod(1 + Ret),
+         dd  = cum / cummax(cum) - 1) %>%
+  summarise(
+    MaxDD = min(dd, na.rm = TRUE),
+    EndEq = last(cum),
+    CAGR  = EndEq^(1 / (n() / 12)) - 1,
+    Calmar= CAGR / (-MaxDD),
+    .groups = "drop"
+  )
+
+print(drawdowns)
+
+# ------------------------------------------------------------------------------
+# 3) EFFICIENT FRONTIER
+# ------------------------------------------------------------------------------
+w_seq <- seq(0, 1, by = 0.01)
+ef <- tibble(w_carry = w_seq) %>%
+  mutate(
+    w_FF3 = 1 - w_carry,
+    mu  = w_carry * mu_ann[1] + w_FF3 * mu_ann[2],
+    vol = sqrt(w_carry^2 * Sigma[1,1] * 12 +
+               w_FF3^2    * Sigma[2,2] * 12 +
+               2 * w_carry * w_FF3 * Sigma[1,2] * 12),
+    Sharpe = mu / vol
+  )
+
+ggplot(ef, aes(vol, mu)) +
+  geom_path() +
+  geom_point(aes(color = Sharpe), size = 2) +
+  scale_color_viridis_c() +
+  labs(title = "Efficient Frontier: Carry vs. FF3",
+       x = "Annual Vol", y = "Annual Return") +
+  theme_minimal(base_size = 14)
+
+opt <- ef %>% slice_max(Sharpe, n = 1)
+print(opt)
+
+```
+
+### Volatility-timing - needs fixing cuz something is severely wrong here
+
+```{r, eval=FALSE}
+
+# ------------------------------------------------------------------------------
+# 4a) VOL-TIMING (with a 12% annual target vol)
+# ------------------------------------------------------------------------------
+target_ann_vol     <- 0.12
+target_monthly_vol <- target_ann_vol / sqrt(12)
+
+vol_blend <- combo %>%
+  arrange(month) %>%
+  mutate(
+    carry_vol     = slide_dbl(carry, sd,       .before=11, .complete=TRUE),
+    FF3_vol       = slide_dbl(FF3,   sd,       .before=11, .complete=TRUE),
+    carry_scaled  = carry / carry_vol * target_monthly_vol,
+    FF3_scaled    = FF3   / FF3_vol   * target_monthly_vol,
+    blend_vol_ret = 0.5 * carry_scaled + 0.5 * FF3_scaled
+  ) %>%
+  filter(!is.na(blend_vol_ret)) %>%
+  transmute(month, Strategy="Vol-Timed", Ret=blend_vol_ret)
+
+# ------------------------------------------------------------------------------
+# 4b) MOMENTUM-TILT
+# ------------------------------------------------------------------------------
+mom_blend <- combo %>%
+  arrange(month) %>%
+  mutate(
+    mom_carry   = slide_dbl(carry, ~prod(1 + .x) - 1, .before=11, .complete=TRUE),
+    mom_FF3     = slide_dbl(FF3,   ~prod(1 + .x) - 1, .before=11, .complete=TRUE),
+    w_carry     = case_when(
+      mom_carry>0 & mom_FF3>0 ~ mom_carry/(mom_carry+mom_FF3),
+      mom_carry>0             ~ 1,
+      mom_FF3>0               ~ 0,
+      TRUE                    ~ 0.5
+    ),
+    w_FF3       = 1 - w_carry,
+    blend_mom_rt= w_carry*carry + w_FF3*FF3
+  ) %>%
+  filter(!is.na(blend_mom_rt)) %>%
+  transmute(month, Strategy="Mom-Tilt", Ret=blend_mom_rt)
+
+baseline  <- bind_rows(
+  combo    %>% transmute(month, Strategy="Carry-only", Ret=carry),
+  combo    %>% transmute(month, Strategy="FF3-only",   Ret=FF3),
+  blends   # these already have month, Strategy="Equal-Weight"/"Risk-Parity"/"MaxSharpe" and Ret
+)
+
+all_strats <- bind_rows(baseline, vol_blend, mom_blend)
+
+# ------------------------------------------------------------------------------
+# PERFORMANCE STATS (annualized) FOR EVERY STRATEGY
+# ------------------------------------------------------------------------------
+perf_stats <- all_strats %>% 
+  group_by(Strategy) %>% 
+  summarise(
+    mean_m   = mean(Ret, na.rm=TRUE),
+    sd_m     = sd(Ret,   na.rm=TRUE),
+    skew     = skewness(Ret,   na.rm=TRUE),
+    kurt     = kurtosis(Ret,   na.rm=TRUE),
+    sharpe_m = mean_m / sd_m,
+    .groups="drop"
+  ) %>% 
+  mutate(
+    Mean    = 100 * mean_m   * 12,
+    `St.Dev`= 100 * sd_m     * sqrt(12),
+    Sharpe  = sharpe_m       * sqrt(12)
+  ) %>% 
+  select(Strategy, Mean, `St.Dev`, skew, kurt, Sharpe)
+
+# ------------------------------------------------------------------------------
+# DRAWDOWNS & CALMAR
+# ------------------------------------------------------------------------------
+dd_stats <- all_strats %>% 
+  group_by(Strategy) %>% 
+  arrange(month) %>% 
+  mutate(
+    cum    = cumprod(1 + Ret),
+    dd     = cum/cummax(cum) - 1
+  ) %>% 
+  summarise(
+    maxDD  = min(dd, na.rm=TRUE),
+    endEq  = last(cum),
+    n      = n(),
+    CAGR   = endEq^(12/n) - 1,
+    Calmar = CAGR/abs(maxDD),
+    .groups="drop"
+  ) %>% 
+  select(-n)
+
+# ------------------------------------------------------------------------------
+# PLOT OF ALL CUMULATIVE EQUITY LINES
+# ------------------------------------------------------------------------------
+cum_df <- all_strats %>%
+  group_by(Strategy) %>% 
+  arrange(month) %>% 
+  mutate(Equity = cumprod(1 + Ret)) %>% 
+  ungroup()
+
+ggplot(cum_df, aes(month, Equity, color=Strategy)) +
+  geom_line() +
+  scale_y_log10() +
+  theme_minimal() +
+  labs(title="Cumulative Equity: All Strategies", y="Equity (log scale)", x="Month")
+
+# ------------------------------------------------------------------------------
+# STATS OUTPUT
+# ------------------------------------------------------------------------------
+list(
+  Performance = perf_stats,
+  Drawdowns   = dd_stats
+)
+```
+
+#### lag one more month
+
+```{r}
+# ------------------------------------------------------------------------------
+# 4a) VOL-TIMING (with a 12% annual target vol), using an extra one‐month lag
+# ------------------------------------------------------------------------------
+target_ann_vol     <- 0.12
+target_monthly_vol <- target_ann_vol / sqrt(12)
+
+vol_blend <- combo %>%
+  arrange(month) %>%
+  mutate(
+    carry_lag    = lag(carry),
+    FF3_lag      = lag(FF3),
+    carry_vol    = slide_dbl(carry_lag, sd,       .before = 11, .complete = TRUE),
+    FF3_vol      = slide_dbl(FF3_lag,   sd,       .before = 11, .complete = TRUE),
+    carry_scaled = carry_lag / carry_vol * target_monthly_vol,
+    FF3_scaled   = FF3_lag   / FF3_vol   * target_monthly_vol,
+    blend_vol_rt = 0.5 * carry_scaled + 0.5 * FF3_scaled
+  ) %>%
+  filter(!is.na(blend_vol_rt)) %>%
+  transmute(
+    month    = month,           # blended return at t uses data through t-1 
+    Strategy = "Vol-Timed",
+    Ret      = blend_vol_rt
+  )
+
+# ------------------------------------------------------------------------------
+# 4b) MOMENTUM-TILT, using an extra one‐month lag
+# ------------------------------------------------------------------------------
+mom_blend <- combo %>%
+  arrange(month) %>%
+  mutate(
+    carry_lag    = lag(carry),
+    FF3_lag      = lag(FF3),
+    mom_carry    = slide_dbl(carry_lag, ~prod(1 + .x) - 1, .before = 11, .complete = TRUE),
+    mom_FF3      = slide_dbl(FF3_lag,   ~prod(1 + .x) - 1, .before = 11, .complete = TRUE),
+    w_carry      = case_when(
+      mom_carry > 0 & mom_FF3 > 0 ~ mom_carry / (mom_carry + mom_FF3),
+      mom_carry > 0              ~ 1,
+      mom_FF3   > 0              ~ 0,
+      TRUE                       ~ 0.5
+    ),
+    w_FF3        = 1 - w_carry,
+    blend_mom_rt = w_carry * carry + w_FF3 * FF3
+  ) %>%
+  filter(!is.na(blend_mom_rt)) %>%
+  transmute(
+    month    = month,
+    Strategy = "Mom-Tilt",
+    Ret      = blend_mom_rt
+  )
+
+baseline <- bind_rows(
+  combo %>% transmute(month, Strategy = "Carry-only", Ret = carry),
+  combo %>% transmute(month, Strategy = "FF3-only",   Ret = FF3),
+  blends   
+)
+
+all_strats <- bind_rows(baseline, vol_blend, mom_blend)
+
+# ------------------------------------------------------------------------------
+# 3) PERFORMANCE STATS (annualized) FOR EVERY STRATEGY
+# ------------------------------------------------------------------------------
+perf_stats <- all_strats %>% 
+  group_by(Strategy) %>% 
+  summarise(
+    mean_m   = mean(Ret, na.rm = TRUE),
+    sd_m     = sd(Ret,   na.rm = TRUE),
+    skew     = skewness(Ret,   na.rm = TRUE),
+    kurt     = kurtosis(Ret,   na.rm = TRUE),
+    sharpe_m = mean_m / sd_m,
+    .groups  = "drop"
+  ) %>% 
+  mutate(
+    Mean     = 100 * mean_m   * 12,
+    `St.Dev` = 100 * sd_m     * sqrt(12),
+    Sharpe   = sharpe_m       * sqrt(12)
+  ) %>% 
+  select(Strategy, Mean, `St.Dev`, skew, kurt, Sharpe)
+
+# ------------------------------------------------------------------------------
+# 4) DRAWDOWNS & CALMAR
+# ------------------------------------------------------------------------------
+dd_stats <- all_strats %>% 
+  group_by(Strategy) %>% 
+  arrange(month) %>% 
+  mutate(
+    cum   = cumprod(1 + Ret),
+    dd    = cum / cummax(cum) - 1
+  ) %>% 
+  summarise(
+    maxDD  = min(dd, na.rm = TRUE),
+    endEq  = last(cum),
+    n      = n(),
+    CAGR   = endEq^(12 / n) - 1,
+    Calmar = CAGR / abs(maxDD),
+    .groups = "drop"
+  ) %>% 
+  select(-n)
+
+# ------------------------------------------------------------------------------
+# 5) PLOT OF ALL CUMULATIVE EQUITY LINES
+# ------------------------------------------------------------------------------
+cum_df <- all_strats %>%
+  group_by(Strategy) %>% 
+  arrange(month) %>% 
+  mutate(Equity = cumprod(1 + Ret)) %>% 
+  ungroup()
+
+color_map <- c(
+  "Carry-only"   = "#E69F00",  # orange
+  "FF3-only"     = "#56B4E9",  # sky blue
+  "Equal-Weight" = "#009E73",  # bluish green
+  "Risk-Parity"  = "#F0E442",  # yellow
+  "MaxSharpe"    = "#0072B2",  # blue
+  "Vol-Timed"    = "#D55E00",  # vermillion
+  "Mom-Tilt"     = "#CC79A7"   # purple
+)
+
+ggplot(cum_df, aes(month, Equity, color = Strategy)) +
+  geom_line(size = 1) +
+  scale_color_manual(values = color_map) +
+  scale_y_log10() +
+  theme_minimal() +
+  labs(
+    title = "Cumulative Equity: All Strategies (with an extra 1-month lag)",
+    y     = "Equity (log scale)",
+    x     = "Month"
+  ) +
+  theme(legend.position = "bottom")
+
+# ------------------------------------------------------------------------------
+# 6) STATS OUTPUT
+# ------------------------------------------------------------------------------
+list(
+  Performance = perf_stats,
+  Drawdowns   = dd_stats
+)
+```
+
+## Doing a price-momentum strategy
+
+```{r}
+monthly <- final_data %>%
+  filter(days_to_expiry >= 3) %>%
+  mutate(month = floor_date(Date, "month")) %>%
+  group_by(Ticker, month) %>%
+  summarize(PX_LAST = last(PX_LAST), .groups="drop") %>%
+  arrange(Ticker, month) %>%
+  group_by(Ticker) %>%
+  mutate(ret = PX_LAST / lag(PX_LAST) - 1) %>%
+  ungroup()
+
+mom_df <- monthly %>%
+  group_by(Ticker) %>%
+  mutate(
+    px_lag1  = lag(PX_LAST,  1),
+    px_lag13 = lag(PX_LAST, 13),
+    mom12    = px_lag1 / px_lag13 - 1
+  ) %>%
+  select(Ticker, month, ret, mom12) %>%
+  ungroup()
+
+cs_mom <- mom_df %>%
+  group_by(month) %>%
+  filter(!is.na(mom12)) %>%
+  mutate(
+    q_lo = quantile(mom12, 0.10),
+    q_hi = quantile(mom12, 0.90)
+  ) %>%
+  mutate(
+    signal_cs = case_when(
+      mom12 >= q_hi ~ +1,
+      mom12 <= q_lo ~ -1,
+      TRUE          ~  0
+    )
+  ) %>%
+  group_by(month) %>%
+  mutate(
+    n_long  = sum(signal_cs == +1),
+    n_short = sum(signal_cs == -1)
+  ) %>%
+  mutate(
+    wt_cs = case_when(
+      signal_cs == +1 ~  1 / n_long,
+      signal_cs == -1 ~ -1 / n_short,
+      TRUE            ~  0
+    )
+  ) %>%
+  ungroup() %>%
+  group_by(month) %>%
+  summarize(
+    ret_cs = sum(wt_cs * ret, na.rm=TRUE),
+    .groups="drop"
+  )
+ts_mom <- mom_df %>%
+  filter(!is.na(mom12)) %>% 
+  mutate(signal_ts = if_else(mom12 >= 0, +1, -1)) %>%
+  group_by(month) %>%
+  mutate(
+    N = n(),
+    wt_ts = signal_ts / N
+  ) %>%
+  ungroup() %>%
+  group_by(month) %>%
+  summarize(
+    ret_ts = sum(wt_ts * ret, na.rm=TRUE),
+    .groups="drop"
+  )
+
+out <- bind_rows(
+  cs_mom %>% 
+    rename(Ret = ret_cs) %>% 
+    mutate(Strategy = "CrossSectionalMom"),
+  ts_mom %>% 
+    rename(Ret = ret_ts) %>% 
+    mutate(Strategy = "TrendTSMom")
+) %>% 
+  arrange(month, Strategy)
+
+# Quick check: cumulative P&L plot 
+ggplot(out, aes(month, Ret + 1, color=Strategy)) +
+  geom_line() +
+  scale_y_log10() +
+  labs(title="Momentum Strategies (calendar-month)", y="Equity (log scale)")
+
+# Performance table
+library(dplyr)
+library(moments)
+perf <- out %>%
+  group_by(Strategy) %>%
+  summarise(
+    Mean    = 100 * mean(Ret, na.rm=TRUE) * 12,
+    StDev   = 100 * sd(Ret,   na.rm=TRUE) * sqrt(12),
+    Sharpe  = mean(Ret, na.rm=TRUE)/sd(Ret, na.rm=TRUE)*sqrt(12),
+    Skew    = skewness(Ret, na.rm=TRUE),
+    Kurt    = kurtosis(Ret, na.rm=TRUE),
+    .groups="drop"
+  )
+print(perf)
+
+```
+
+### Combo price-momentum and carry
+
+```{r}
+carry_df <- portf_ret_rf %>%
+  rename(month = return_month) %>%
+  select(month, carry = carry_portf)
+
+mom_df <- ts_mom %>%
+  rename(month = month, momentum = ret_ts) %>%
+  select(month, momentum)
+
+combo <- inner_join(carry_df, mom_df, by="month") %>%
+  arrange(month)
+
+combo <- combo %>%
+  mutate(blend_eq = 0.5*carry + 0.5*momentum)
+
+sd_carry <- sd(combo$carry, na.rm=TRUE)*sqrt(12)
+sd_mom    <- sd(combo$momentum, na.rm=TRUE)*sqrt(12)
+inv_vol   <- c(1/sd_carry, 1/sd_mom)
+w_rp      <- inv_vol / sum(inv_vol)
+combo <- combo %>%
+  mutate(blend_rp = w_rp[1]*carry + w_rp[2]*momentum)
+
+R     <- combo %>% select(carry, momentum) %>% as.matrix()
+mu    <- colMeans(R)
+Sigma <- cov(R)
+w_raw <- solve(Sigma, mu)
+w_ms  <- w_raw / sum(w_raw)
+combo <- combo %>%
+  mutate(blend_ms = w_ms[1]*carry + w_ms[2]*momentum)
+
+plot_df <- combo %>%
+  transmute(
+    month,
+    `Carry only`       = cumprod(1+carry),
+    `Mom only`         = cumprod(1+momentum),
+    `Equal-Weight`     = cumprod(1+blend_eq),
+    `Risk-Parity`      = cumprod(1+blend_rp),
+    `Max-Sharpe`       = cumprod(1+blend_ms)
+  ) %>%
+  pivot_longer(-month, names_to="Strategy", values_to="Equity")
+
+ggplot(plot_df, aes(month, Equity, color=Strategy)) +
+  geom_line(size=1) +
+  scale_x_date(date_breaks="5 years", date_labels="%Y") +
+  labs(
+    title="Carry vs. Price-Mom Blends: EW, RP, MaxSharpe",
+    x=NULL, y="Cumulative Level"
+  ) +
+  theme_minimal(base_size=13)
+
+
+perf_table <- combo %>%
+  select(month, 
+         `Carry only`   = carry, 
+         `Mom only`     = momentum, 
+         `Equal-Weight` = blend_eq, 
+         `Risk-Parity`  = blend_rp, 
+         `Max-Sharpe`   = blend_ms
+  ) %>%
+  pivot_longer(-month, names_to="Strategy", values_to="ret") %>%
+  group_by(Strategy) %>%
+  summarise(
+    mean_m   = mean(ret, na.rm=TRUE),
+    sd_m     = sd(ret,   na.rm=TRUE),
+    skew     = skewness(ret, na.rm=TRUE),
+    kurt     = kurtosis(ret, na.rm=TRUE),
+    sharpe_m = mean_m/sd_m,
+    # drawdown
+    cum       = list(cumprod(1+ret)),
+    dd        = list({
+      c <- cumprod(1+ret)
+      c/cummax(c) - 1
+    }),
+    maxDD     = min(unlist(dd)),
+    .groups="drop"
+  ) %>%
+  mutate(
+    # annualize
+    Mean    = 100 * mean_m    * 12,
+    `St.Dev`= 100 * sd_m      * sqrt(12),
+    Sharpe  = sharpe_m        * sqrt(12),
+    MaxDD   = 100 * maxDD
+  ) %>%
+  select(Strategy, Mean, `St.Dev`, skew, kurt, Sharpe, MaxDD)
+
+print(perf_table)
+```
+
+# Trading costs incorporated into chosen strategies
+
+```{r}
+half_spread_by_month <- final_data %>%
+  filter(PX_LAST > 0) %>%
+  mutate(half_spread = abs(PX_ASK - PX_BID) / PX_LAST / 2) %>%
+  filter(is.finite(half_spread)) %>%
+  transmute(return_month = Date, half_spread) %>%
+  group_by(return_month) %>%
+  summarize(avg_half_spread = mean(half_spread, na.rm=TRUE), .groups="drop") %>%
+  complete(return_month = seq(min(return_month), max(return_month), by = "month")) %>%
+  arrange(return_month) %>%
+  mutate(avg_half_spread = na.approx(avg_half_spread, x = return_month, na.rm = FALSE)) %>%
+  mutate(
+    avg_half_spread = na.locf(avg_half_spread, na.rm = FALSE),
+    avg_half_spread = na.locf(avg_half_spread, fromLast = TRUE)
+  ) %>%
+  mutate(avg_half_spread = pmax(avg_half_spread, 0))
+
+# (a) Carry-only
+carry_costed <- portf_ret %>%
+  rename(return_month = return_month, gross = carry_portf) %>%
+  left_join(half_spread_by_month, by = "return_month") %>%
+  transmute(
+    return_month,
+    Strategy = "Carry-only",
+    gross,
+    cost = coalesce(avg_half_spread, lag(avg_half_spread), 0),
+    net  = gross - cost
+  )
+
+# (b) Expo-Weighted (1/sigma)
+expo_costed <- expo_df %>%
+  rename(return_month = month, gross = combo) %>%
+  left_join(half_spread_by_month, by = "return_month") %>%
+  transmute(
+    return_month,
+    Strategy = "Expo-Weighted (1/sigma)",
+    gross,
+    cost = coalesce(avg_half_spread, lag(avg_half_spread), 0),
+    net  = gross - cost
+  )
+
+# (c) New EW (EQ4+CMDTY)
+newew_costed <- portf2_ret %>%
+  rename(return_month = return_month, gross = carry_eq4cmd) %>%
+  left_join(half_spread_by_month, by = "return_month") %>%
+  transmute(
+    return_month,
+    Strategy = "New EW (EQ3+CMDTY)",
+    gross,
+    cost = coalesce(avg_half_spread, lag(avg_half_spread), 0),
+    net  = gross - cost
+  )
+
+# (d) FF3+Carry blends: Equal, Risk-Parity, Max-Sharpe
+ff_blends_costed <- blends %>%
+  rename(return_month = month, gross = Ret) %>%
+  left_join(half_spread_by_month, by = "return_month") %>%
+  transmute(
+    return_month,
+    Strategy,
+    gross,
+    cost = coalesce(avg_half_spread, lag(avg_half_spread), 0),
+    net  = gross - cost
+  )
+
+# (e) Vol-Timed & Mom-Tilt
+volmom_costed <- all_strats %>%
+  rename(return_month = month, gross = Ret) %>%
+  left_join(half_spread_by_month, by = "return_month") %>%
+  transmute(
+    return_month,
+    Strategy,
+    gross,
+    cost = coalesce(avg_half_spread, lag(avg_half_spread), 0),
+    net  = gross - cost
+  )
+
+# (f) Max-Sharpe Carry+Price-Mom
+cpm_costed <- combo %>%
+  rename(return_month = month, gross = blend_ms) %>%
+  left_join(half_spread_by_month, by = "return_month") %>%
+  transmute(
+    return_month,
+    Strategy = "MaxSharpe Carry+Mom",
+    gross,
+    cost = coalesce(avg_half_spread, lag(avg_half_spread), 0),
+    net  = gross - cost
+  )
+
+
+all_costed <- bind_rows(
+  carry_costed,
+  expo_costed,
+  newew_costed,
+  ff_blends_costed,
+  volmom_costed,
+  cpm_costed
+)
+
+performance_table <- all_costed %>%
+  group_by(Strategy) %>%
+  summarize(
+    Mean   = 100 * mean(net, na.rm=TRUE) * 12,
+    StDev  = 100 * sd(net,   na.rm=TRUE) * sqrt(12),
+    Sharpe = mean(net, na.rm=TRUE)/sd(net, na.rm=TRUE) * sqrt(12),
+    .groups="drop"
+  ) %>%
+  arrange(desc(Sharpe))
+
+print(performance_table)
+
+example_eq <- all_costed %>%
+  filter(Strategy == "Carry-only") %>%
+  arrange(return_month) %>%
+  mutate(
+    gross_eq = cumprod(1 + gross),
+    net_eq   = cumprod(1 + net)
+  ) %>%
+  pivot_longer(c(gross_eq, net_eq), names_to="Series", values_to="Equity")
+
+ggplot(example_eq, aes(return_month, Equity, color=Series)) +
+  geom_line(size=1) +
+  labs(
+    title="Carry Strategy: Gross vs. Net (half-spread cost)",
+    x="Month", y="Cumulative Equity"
+  ) +
+  theme_minimal()
+```
+
+## A couple graphs
+
+```{r}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+
+wanted <- c("Mom-Tilt", "FF3-only", "Equal-Weight", "MaxSharpe")
+
+all_costed %>% 
+  filter(Strategy %in% wanted) %>% 
+  arrange(Strategy, return_month) %>% 
+  group_by(Strategy) %>% 
+  mutate(
+    gross_eq = cumprod(1 + gross),
+    net_eq   = cumprod(1 + net)
+  ) %>% 
+  ungroup() %>% 
+  pivot_longer(
+    cols = c(gross_eq, net_eq),
+    names_to  = "Series",
+    values_to = "Equity"
+  ) %>% 
+  mutate(
+    Series = recode(Series,
+      gross_eq = "Gross",
+      net_eq   = "Net"
+    )
+  ) %>% 
+  ggplot(aes(x = return_month, y = Equity, color = Series)) +
+  geom_line(size = 1) +
+  facet_wrap(~ Strategy, scales = "free_y") +
+  labs(
+    title = "Gross vs. Net Equity Curves",
+    x     = "Month",
+    y     = "Cumulative Equity"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+```
+
+# Tables/stuff for paper
+
+```{r}
+
+# -----------------------------------------------------------------------------
+# 1) EQUITIES table
+# -----------------------------------------------------------------------------
+equity_table <- tribble(
+  ~Market       , ~`Spot ticker`   , ~`Futures ticker`,
+  "US"           , "SPX Index"      , "SPx Index",
+  "Canada"       , "SPTSX60 Index"  , "PTx Index",
+  "UK"           , "UKX Index"      , "Zx Index",
+  "France"       , "CAC Index"      , "CFx Index",
+  "Germany"      , "DAX Index"      , "GXx Index",
+  "Spain"        , "IBEX Index"     , "IBx Index",
+  "Italy"        , "FTSEMIB Index"  , "STx Index",
+  "Netherlands"  , "AEX Index"      , "EOx Index",
+  "Sweden"       , "OMX Index"      , "QCx Index",
+  "Switzerland"  , "SMI Index"      , "SMx Index",
+  "Japan"        , "NKY Index"      , "NKx Index",
+  "Hong Kong"    , "HSI Index"      , "HIx Index",
+  "Australia"    , "AS51 Index"     , "XPx Index"
+)
+
+# -----------------------------------------------------------------------------
+# 2) COMMODITIES table
+# -----------------------------------------------------------------------------
+commodity_table <- tribble(
+  ~Market        , ~`GSCI ER`         , ~`Futures ticker`,
+  "Crude Oil"    , "SPGCBRP Index"    , "COx Comdty",
+  "Gasoil"       , "SPGCGOP Index"    , "QSx Comdty",
+  "WTI Crude"    , "SPGCCLP Index"    , "CLx Comdty",
+  "Unl. Gasoline", "SPGCHUP Index"    , "XBx Comdty",
+  "Heating Oil"  , "SPGCHOP Index"    , "HOx Comdty",
+  "Natural Gas"  , "SPGCNGP Index"    , "NGx Comdty",
+  "Cotton"       , "SPGCCTP Index"    , "CTx Comdty",
+  "Coffee"       , "SPGCKCP Index"    , "KCx Comdty",
+  "Cocoa"        , "SPGCCCP Index"    , "CCx Comdty",
+  "Sugar"        , "SPGCSBP Index"    , "SBx Comdty",
+  "Soybeans"     , "SPGCSOP Index"    , "Sx Comdty",
+  "Kansas Wheat" , "SPGCKWP Index"    , "KWx Comdty",
+  "Corn"         , "SPGCCNP Index"    , "Cx Comdty",
+  "Wheat"        , "SPGCWHP Index"    , "Wx Comdty",
+  "Lean Hogs"    , "SPGCLHP Index"    , "LHx Comdty",
+  "Feeder Cattle", "SPGCFCP Index"    , "FCx Comdty",
+  "Live Cattle"  , "SPGCLCP Index"    , "LCx Comdty",
+  "Gold"         , "SPGCGCP Index"    , "GCx Comdty",
+  "Silver"       , "SPGCSIP Index"    , "SIx Comdty",
+  "Aluminum"     , "SPGCIAP Index"    , NA,
+  "Nickel"       , "SPGCIKP Index"    , NA,
+  "Lead"         , "SPGCILP Index"    , NA,
+  "Zinc"         , "SPGCIZP Index"    , NA,
+  "Copper"       , "SPGCICP Index"    , NA
+)
+
+# -----------------------------------------------------------------------------
+# 3) Display nicely
+# -----------------------------------------------------------------------------
+cat("\n**Equities**\n")
+print(kable(equity_table, align = "lcl"))
+
+cat("\n**Commodities**\n")
+print(kable(commodity_table, align = "lcl"))
+```
